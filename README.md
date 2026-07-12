@@ -119,6 +119,22 @@ sudo systemctl status vps-console
 The service binds to `127.0.0.1:6000` only (see `HOST`/`PORT` in `.env`) —
 it is never reachable directly from the network.
 
+### Updating
+
+After the first-run setup above, pulling and applying future changes is one
+command:
+
+```bash
+sudo bash /opt/vps-console/deploy/update.sh
+```
+
+It pulls, reinstalls dependencies, rebuilds the frontend, re-locks the helper
+scripts, re-validates and reinstalls the sudoers rule (refusing to touch it
+if the new version fails validation), reinstalls the systemd unit, and
+restarts the service. It does not touch the NGINX vhost — that file gets
+hand-edited and certbot-modified after first install, so update it manually
+when `deploy/nginx/vps-console.conf` changes.
+
 ## Choosing how to expose it
 
 The backend is loopback-only by design. Pick one:

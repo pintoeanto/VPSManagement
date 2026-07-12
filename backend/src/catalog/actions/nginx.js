@@ -3,6 +3,12 @@ import { defineAction } from '../types.js';
 import { execReadOnly, runHelperScript } from '../../exec/sudoExec.js';
 
 const hostnameToken = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+// Broader than hostnameToken: matches the literal filename under
+// sites-available, which includes both hostnames created through this tool
+// and arbitrary pre-existing hand-written vhost filenames (e.g.
+// "cupo-route-alfattan", no ".conf" suffix). Must mirror
+// validate_site_name() in scripts/nginx_configure.sh exactly.
+const siteNameToken = /^[A-Za-z0-9]([A-Za-z0-9._-]{0,120}[A-Za-z0-9])?$/;
 
 async function detectNginx() {
   const [dpkg, version] = await Promise.all([
@@ -128,7 +134,7 @@ const configureSite = defineAction({
   },
 });
 
-const removeSiteSchema = z.object({ serverName: z.string().max(253).regex(hostnameToken) });
+const removeSiteSchema = z.object({ serverName: z.string().min(1).max(122).regex(siteNameToken) });
 
 const removeSite = defineAction({
   id: 'nginx.removeSite',
@@ -150,6 +156,57 @@ const removeSite = defineAction({
       throw new Error(`nginx_configure remove failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
     }
     return { alreadySatisfied: false, stdout: result.stdout.trim() };
+  },
+});
+
+const getSiteRawSchema = z.object({ name: z.string().min(1).max(122).regex(siteNameToken) });
+
+const getSiteRaw = defineAction({
+  id: 'nginx.getSiteRaw',
+  category: 'nginx',
+  label: 'Get raw NGINX site config',
+  mutating: false,
+  paramsSchema: getSiteRawSchema,
+  async detect(params) {
+    const content = await getSiteConfig(params.name);
+    return { exists: content !== null, content };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
+const setSiteRawSchema = z.object({
+  name: z.string().min(1).max(122).regex(siteNameToken),
+  content: z.string().min(1).max(200_000),
+});
+
+const setSiteRaw = defineAction({
+  id: 'nginx.setSiteRaw',
+  category: 'nginx',
+  label: 'Edit raw NGINX site config',
+  paramsSchema: setSiteRawSchema,
+  async detect(params) {
+    const content = await getSiteConfig(params.name);
+    return { exists: content !== null, currentContent: content };
+  },
+  async plan(params, detectResult) {
+    return {
+      description: detectResult.exists ? `Overwrite raw config for ${params.name}` : `Create raw config for ${params.name}`,
+    };
+  },
+  async apply(params) {
+    const result = await runHelperScript('NGINX_CONFIGURE', ['setraw', params.name], {
+      timeoutMs: 30_000,
+      input: params.content,
+    });
+    if (!result.success) {
+      throw new Error(`nginx_configure setraw failed validation, rolled back (exit ${result.exitCode}): ${result.stderr.trim()}`);
+    }
+    return { stdout: result.stdout.trim(), config: await getSiteConfig(params.name) };
   },
 });
 
@@ -182,4 +239,4 @@ const certbotIssue = defineAction({
   },
 });
 
-export const nginxActions = [detect, install, listSites, configureSite, removeSite, certbotIssue];
+export const nginxActions = [detect, install, listSites, configureSite, removeSite, getSiteRaw, setSiteRaw, certbotIssue];

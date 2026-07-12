@@ -3,6 +3,7 @@ import { api } from '../../api/client.js';
 import { usePolling } from '../../hooks/usePolling.js';
 import { StatusBadge } from '../../components/StatusBadge.jsx';
 import { ActionButton } from '../../components/ActionButton.jsx';
+import { RawConfigEditor } from '../../components/RawConfigEditor.jsx';
 
 export function Nginx() {
   const { data: detect, refresh: refreshDetect } = usePolling(() => api.detectAction('nginx.detect', {}), 10000);
@@ -13,6 +14,7 @@ export function Nginx() {
   const [listenPort, setListenPort] = useState(80);
   const [proxyPass, setProxyPass] = useState('');
   const [certEmail, setCertEmail] = useState('');
+  const [editingSiteName, setEditingSiteName] = useState(null); // string (existing) or '' (new); null = closed
 
   function refreshAll() {
     refreshDetect();
@@ -43,7 +45,10 @@ export function Nginx() {
       </div>
 
       <div className="panel">
-        <h2>Server blocks</h2>
+        <div className="row between">
+          <h2 style={{ margin: 0 }}>Server blocks</h2>
+          <button onClick={() => setEditingSiteName('')}>New raw config</button>
+        </div>
         <table>
           <thead>
             <tr>
@@ -61,6 +66,7 @@ export function Nginx() {
                 </td>
                 <td>
                   <div className="row wrap end">
+                    <button onClick={() => setEditingSiteName(s.name)}>Edit</button>
                     <ActionButton
                       actionId="nginx.certbotIssue"
                       params={() => ({ serverName: s.name, email: certEmail || 'admin@example.com' })}
@@ -132,6 +138,18 @@ export function Nginx() {
         </div>
         <p className="hint-text">Used when issuing certs from the server-block table above.</p>
       </div>
+
+      {editingSiteName !== null && (
+        <RawConfigEditor
+          title={editingSiteName ? `Edit ${editingSiteName}` : 'New raw NGINX config'}
+          getActionId="nginx.getSiteRaw"
+          setActionId="nginx.setSiteRaw"
+          name={editingSiteName}
+          allowRename={!editingSiteName}
+          onClose={() => setEditingSiteName(null)}
+          onSaved={refreshAll}
+        />
+      )}
     </div>
   );
 }

@@ -122,7 +122,12 @@ export const api = {
   me: () => request('/auth/me'),
 
   listActions: () => request('/actions'),
-  detectAction: (id, params = {}) => request(`/actions/${id}/detect`, { method: 'POST', body: JSON.stringify(params) }),
+  // The backend wraps this as { detect: <result> } (see catalogRoutes.js) to
+  // stay consistent with /plan and /apply, which need multiple named fields.
+  // Every page here wants the unwrapped result directly, so unwrap once here
+  // rather than at each of the nine call sites across the service pages.
+  detectAction: (id, params = {}) =>
+    request(`/actions/${id}/detect`, { method: 'POST', body: JSON.stringify(params) }).then((r) => r.detect),
   planAction: (id, params = {}) => request(`/actions/${id}/plan`, { method: 'POST', body: JSON.stringify(params) }),
   applyAction: (id, params = {}) => request(`/actions/${id}/apply`, { method: 'POST', body: JSON.stringify(params) }),
 
