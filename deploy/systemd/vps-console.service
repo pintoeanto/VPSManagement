@@ -17,19 +17,25 @@ RestartSec=3
 # This process invokes `sudo` to run the whitelisted root-owned helper
 # scripts, and sudo needs the setuid-root privilege transition to work at
 # all — so the unit-wide "no new privileges" kernel flag must stay off.
-# NoNewPrivileges=true is NOT set here, deliberately. Just as important:
-# several *other* systemd sandboxing directives silently force that same
-# flag on even without setting it directly — ProtectKernelTunables=,
-# ProtectKernelModules=, LockPersonality=, RestrictRealtime=, and
-# RestrictSUIDSGID= all imply NoNewPrivileges=yes per systemd.exec(5) the
-# moment they're enabled. Do not add any of those to this unit; they will
-# break every privileged action with "sudo: the 'no new privileges' flag is
-# set" even though NoNewPrivileges itself was never touched. Only directives
-# confirmed NOT to carry that implication are used below.
-ProtectSystem=strict
-ProtectHome=true
+# NoNewPrivileges=true is NOT set here, deliberately. Several *other*
+# systemd sandboxing directives silently force that same flag on even
+# without setting it directly — ProtectKernelTunables=, ProtectKernelModules=,
+# LockPersonality=, RestrictRealtime=, and RestrictSUIDSGID= all imply
+# NoNewPrivileges=yes per systemd.exec(5) the moment they're enabled. Do not
+# add any of those to this unit.
+#
+# ProtectSystem=/ProtectHome= are ALSO deliberately not set, for a related
+# but distinct reason: they mount most of the filesystem (including /etc)
+# read-only inside a private mount namespace for this unit, and that
+# namespace is inherited by every child process it spawns — including the
+# root-elevated helper scripts run via sudo. sudo changes UID, not the mount
+# namespace, so a sudo'd script stays confined to the read-only bind mount
+# even as root, and every config write (nginx, wireguard, mosquitto, ...)
+# fails with "Read-only file system". The real security boundary here is
+# already the non-root app user + the narrow sudoers allowlist + each
+# script's own input validation, not filesystem-level mount protection on
+# top of that — so this is a deliberate omission, not an oversight.
 PrivateTmp=true
-ReadWritePaths=/opt/vps-console/backend/data
 
 # Bind to 127.0.0.1 only (see backend/.env HOST) — public exposure, if any,
 # happens exclusively through the NGINX TLS reverse proxy or an SSH tunnel.
