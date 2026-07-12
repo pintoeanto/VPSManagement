@@ -92,3 +92,26 @@ validate_wg_interface_name() {
     exit 2
   fi
 }
+
+# validate_allowed_ips_list <value>
+# A peer's AllowedIPs is a comma-separated list in real WireGuard configs —
+# gateway peers route more than just their own /32. Validates every entry
+# individually so "10.8.0.2/32, 192.168.50.0/24" passes but any malformed
+# entry anywhere in the list is rejected.
+validate_allowed_ips_list() {
+  local value="$1"
+  local cidr_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'
+  local part trimmed
+  IFS=',' read -ra parts <<< "$value"
+  if [[ "${#parts[@]}" -eq 0 ]]; then
+    echo "invalid allowedIps: $value" >&2
+    exit 2
+  fi
+  for part in "${parts[@]}"; do
+    trimmed="$(echo "$part" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
+    if [[ ! "$trimmed" =~ $cidr_regex ]]; then
+      echo "invalid allowedIps: $value" >&2
+      exit 2
+    fi
+  done
+}

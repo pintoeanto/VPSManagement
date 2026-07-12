@@ -22,6 +22,7 @@ Cmnd_Alias VPS_CONSOLE_HELPERS = \
     /opt/vps-console/backend/scripts/port_check.sh, \
     /opt/vps-console/backend/scripts/wireguard_install.sh, \
     /opt/vps-console/backend/scripts/wireguard_peer_add.sh, \
+    /opt/vps-console/backend/scripts/wireguard_peer_update.sh, \
     /opt/vps-console/backend/scripts/wireguard_peer_remove.sh, \
     /opt/vps-console/backend/scripts/wireguard_status.sh, \
     /opt/vps-console/backend/scripts/wireguard_config.sh, \

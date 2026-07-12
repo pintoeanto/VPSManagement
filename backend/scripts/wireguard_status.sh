@@ -5,7 +5,9 @@
 # Read-only. `list` enumerates every /etc/wireguard/*.conf tunnel with its
 # up/down state, listen port, and peer count — the Tunnels tab reads from
 # this. `show` prints one interface's live status cross-referenced with the
-# "# name:" markers in its config. Never prints any private key.
+# "# name:" and optional "# group:" markers in its config (the latter is an
+# arbitrary user-assigned label for clustering peers in the network views —
+# unset for peers without one). Never prints any private key.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -47,15 +49,23 @@ case "$subcommand" in
       exit 1
     fi
 
-    # Build pubkey -> name map from the config's "# name:" markers.
+    # Build pubkey -> name/group maps from the config's "# name:"/"# group:"
+    # markers. Both are reset once consumed by the PublicKey line that
+    # follows them, so a marker only ever applies to the very next peer.
     declare -A NAME_OF
+    declare -A GROUP_OF
     current_name=""
+    current_group=""
     while IFS= read -r line; do
       if [[ "$line" =~ ^#\ name:\ (.+)$ ]]; then
         current_name="${BASH_REMATCH[1]}"
-      elif [[ "$line" =~ ^[Pp]ublic[Kk]ey[[:space:]]*=[[:space:]]*(.+)$ ]] && [[ -n "$current_name" ]]; then
+      elif [[ "$line" =~ ^#\ group:\ (.+)$ ]]; then
+        current_group="${BASH_REMATCH[1]}"
+      elif [[ "$line" =~ ^[Pp]ublic[Kk]ey[[:space:]]*=[[:space:]]*(.+)$ ]]; then
         NAME_OF["${BASH_REMATCH[1]}"]="$current_name"
+        GROUP_OF["${BASH_REMATCH[1]}"]="$current_group"
         current_name=""
+        current_group=""
       fi
     done < "$CONF"
 
@@ -73,7 +83,8 @@ case "$subcommand" in
       else
         # peer line: pubkey presharedkey endpoint allowedips latest-handshake rx tx keepalive
         peer_name="${NAME_OF[$a]:-unknown}"
-        echo -e "PEER\t${peer_name}\t${a}\t${c}\t${d}\t${e}\t${f}\t${g}"
+        peer_group="${GROUP_OF[$a]:-}"
+        echo -e "PEER\t${peer_name}\t${a}\t${c}\t${d}\t${e}\t${f}\t${g}\t${peer_group}"
       fi
     done <<< "$dump"
     ;;

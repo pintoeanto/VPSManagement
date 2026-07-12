@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
-# Usage: wireguard_peer_add.sh <interfaceName> <peerName> <allowedIpsCidr>
+# Usage: wireguard_peer_add.sh <interfaceName> <peerName> <allowedIpsCidr> [group]
 # Generates a fresh keypair for the peer, appends it to <interfaceName>.conf
 # atomically, validates with `wg-quick strip`, applies live via `wg syncconf`
 # if the interface is up, and rolls back the config on any validation
 # failure. Prints CLIENT_PRIVATE_KEY once — it is never stored server-side.
+# [group] is an arbitrary user-assigned label (written as a "# group:"
+# comment, same convention as the existing "# name:" marker) used purely to
+# cluster peers in the network views — WireGuard itself never reads it.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
 require_root
-require_arg_count 3 "$#"
+if [[ "$#" -lt 3 || "$#" -gt 4 ]]; then
+  echo "wrong argument count: expected 3 or 4, got $#" >&2
+  exit 2
+fi
 
 interface_name="$1"
 peer_name="$2"
 allowed_ips="$3"
+group="${4:-}"
 validate_wg_interface_name "$interface_name"
 CONF="/etc/wireguard/${interface_name}.conf"
 
 validate_safe_token "$peer_name"
-if [[ ! "$allowed_ips" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
-  echo "invalid allowedIps: $allowed_ips" >&2
-  exit 2
+if [[ -n "$group" ]]; then
+  validate_safe_token "$group"
 fi
+validate_allowed_ips_list "$allowed_ips"
 if [[ ! -f "$CONF" ]]; then
   echo "${interface_name}.conf does not exist; run wireguard.initInterface first" >&2
   exit 1
@@ -46,6 +53,9 @@ backup="$(backup_file "$CONF")"
   cat "$CONF"
   echo ""
   echo "# name: ${peer_name}"
+  if [[ -n "$group" ]]; then
+    echo "# group: ${group}"
+  fi
   echo "[Peer]"
   echo "PublicKey = ${client_pubkey}"
   echo "AllowedIPs = ${allowed_ips}"

@@ -16,6 +16,7 @@ export const HELPER_SCRIPTS = Object.freeze({
   PORT_CHECK: 'port_check.sh',
   WIREGUARD_INSTALL: 'wireguard_install.sh',
   WIREGUARD_PEER_ADD: 'wireguard_peer_add.sh',
+  WIREGUARD_PEER_UPDATE: 'wireguard_peer_update.sh',
   WIREGUARD_PEER_REMOVE: 'wireguard_peer_remove.sh',
   WIREGUARD_STATUS: 'wireguard_status.sh',
   WIREGUARD_CONFIG: 'wireguard_config.sh',

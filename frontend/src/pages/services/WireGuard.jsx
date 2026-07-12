@@ -132,7 +132,13 @@ export function WireGuard() {
 
   const [peerName, setPeerName] = useState('');
   const [allowedIps, setAllowedIps] = useState('10.8.0.2/32');
+  const [peerGroup, setPeerGroup] = useState('');
   const [newPeer, setNewPeer] = useState(null);
+
+  const [editingPeer, setEditingPeer] = useState(false);
+  const [editPeerName, setEditPeerName] = useState('');
+  const [editAllowedIps, setEditAllowedIps] = useState('');
+  const [editGroup, setEditGroup] = useState('');
 
   const interfaces = interfacesData?.interfaces ?? [];
 
@@ -247,6 +253,18 @@ export function WireGuard() {
       setNewPeer(result.result);
     }
     refreshAll();
+  }
+
+  function selectPeer(name) {
+    setEditingPeer(false);
+    setSelectedPeerName(name);
+  }
+
+  function startEditPeer(peer) {
+    setEditPeerName(peer.name);
+    setEditAllowedIps(peer.allowedIps);
+    setEditGroup(peer.group || '');
+    setEditingPeer(true);
   }
 
   const selectedPeer = (status?.peers ?? []).find((p) => p.name === selectedPeerName);
@@ -371,7 +389,7 @@ export function WireGuard() {
                     {(status?.peers ?? []).map((p) => {
                       const st = peerStatus(p.latestHandshake);
                       return (
-                        <div key={p.publicKey} className={`explorer-item ${selectedPeerName === p.name ? 'active' : ''}`} onClick={() => setSelectedPeerName(p.name)}>
+                        <div key={p.publicKey} className={`explorer-item ${selectedPeerName === p.name ? 'active' : ''}`} onClick={() => selectPeer(p.name)}>
                           <span className="dot" style={{ background: STATUS[st].color }} />
                           <span className="name">{p.name}</span>
                           {isGatewayPeer(p.allowedIps) && (
@@ -460,52 +478,109 @@ export function WireGuard() {
                 <>
                   <div className="editor-toolbar">
                     <span className="filename">{selectedPeer.name}</span>
-                    <ActionButton
-                      actionId="wireguard.peerRemove"
-                      params={{ interfaceName: selectedInterface, peerName: selectedPeer.name }}
-                      label="Remove peer"
-                      className="danger"
-                      onApplied={refreshAll}
-                    />
-                  </div>
-                  <div style={{ padding: 16 }}>
-                    <div className="grid">
-                      <div className="stat-tile">
-                        <div className="label">Status</div>
-                        <div className="value" style={{ fontSize: 14 }}>
-                          <StatusBadge status={peerStatus(selectedPeer.latestHandshake) === 'good' ? 'ok' : peerStatus(selectedPeer.latestHandshake) === 'warning' ? 'warn' : 'danger'}>
-                            {STATUS[peerStatus(selectedPeer.latestHandshake)].label}
-                          </StatusBadge>
-                        </div>
-                      </div>
-                      <div className="stat-tile">
-                        <div className="label">Allowed IPs</div>
-                        <div className="value mono" style={{ fontSize: 13 }}>
-                          {selectedPeer.allowedIps}
-                        </div>
-                      </div>
-                      <div className="stat-tile">
-                        <div className="label">Endpoint</div>
-                        <div className="value mono" style={{ fontSize: 13 }}>
-                          {selectedPeer.endpoint || 'none'}
-                        </div>
-                      </div>
-                      <div className="stat-tile">
-                        <div className="label">RX / TX</div>
-                        <div className="value mono" style={{ fontSize: 13 }}>
-                          {selectedPeer.rxBytes} / {selectedPeer.txBytes}
-                        </div>
-                      </div>
-                      {isGatewayPeer(selectedPeer.allowedIps) && (
-                        <div className="stat-tile">
-                          <div className="label">Additional networks</div>
-                          <div className="value mono" style={{ fontSize: 13, color: 'var(--accent-dim)' }}>
-                            ▲ {extraNetworks(selectedPeer.allowedIps).join(', ')}
-                          </div>
-                        </div>
+                    <div className="row wrap">
+                      {editingPeer ? (
+                        <>
+                          <ActionButton
+                            actionId="wireguard.peerUpdate"
+                            params={() => ({
+                              interfaceName: selectedInterface,
+                              peerName: selectedPeer.name,
+                              newPeerName: editPeerName,
+                              allowedIps: editAllowedIps,
+                              group: editGroup.trim() || undefined,
+                            })}
+                            label="Save"
+                            className="primary"
+                            disabled={!editPeerName || !editAllowedIps}
+                            onApplied={() => {
+                              setEditingPeer(false);
+                              selectPeer(editPeerName);
+                              refreshAll();
+                            }}
+                          />
+                          <button onClick={() => setEditingPeer(false)}>Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => startEditPeer(selectedPeer)}>Edit peer</button>
+                          <ActionButton
+                            actionId="wireguard.peerRemove"
+                            params={{ interfaceName: selectedInterface, peerName: selectedPeer.name }}
+                            label="Remove peer"
+                            className="danger"
+                            onApplied={refreshAll}
+                          />
+                        </>
                       )}
                     </div>
                   </div>
+                  {editingPeer ? (
+                    <div style={{ padding: 16 }}>
+                      <p className="hint-text" style={{ marginTop: 0 }}>
+                        The public key is fixed — renaming or changing group/allowed IPs never touches it.
+                      </p>
+                      <div className="form-grid">
+                        <div className="field">
+                          <label>Peer name</label>
+                          <input value={editPeerName} onChange={(e) => setEditPeerName(e.target.value)} />
+                        </div>
+                        <div className="field">
+                          <label>Allowed IPs (CIDR, comma-separated)</label>
+                          <input value={editAllowedIps} onChange={(e) => setEditAllowedIps(e.target.value)} />
+                        </div>
+                        <div className="field">
+                          <label>Group (optional)</label>
+                          <input value={editGroup} onChange={(e) => setEditGroup(e.target.value)} placeholder="office" />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: 16 }}>
+                      <div className="grid">
+                        <div className="stat-tile">
+                          <div className="label">Status</div>
+                          <div className="value" style={{ fontSize: 14 }}>
+                            <StatusBadge status={peerStatus(selectedPeer.latestHandshake) === 'good' ? 'ok' : peerStatus(selectedPeer.latestHandshake) === 'warning' ? 'warn' : 'danger'}>
+                              {STATUS[peerStatus(selectedPeer.latestHandshake)].label}
+                            </StatusBadge>
+                          </div>
+                        </div>
+                        <div className="stat-tile">
+                          <div className="label">Group</div>
+                          <div className="value mono" style={{ fontSize: 13 }}>
+                            {selectedPeer.group || 'none'}
+                          </div>
+                        </div>
+                        <div className="stat-tile">
+                          <div className="label">Allowed IPs</div>
+                          <div className="value mono" style={{ fontSize: 13 }}>
+                            {selectedPeer.allowedIps}
+                          </div>
+                        </div>
+                        <div className="stat-tile">
+                          <div className="label">Endpoint</div>
+                          <div className="value mono" style={{ fontSize: 13 }}>
+                            {selectedPeer.endpoint || 'none'}
+                          </div>
+                        </div>
+                        <div className="stat-tile">
+                          <div className="label">RX / TX</div>
+                          <div className="value mono" style={{ fontSize: 13 }}>
+                            {selectedPeer.rxBytes} / {selectedPeer.txBytes}
+                          </div>
+                        </div>
+                        {isGatewayPeer(selectedPeer.allowedIps) && (
+                          <div className="stat-tile">
+                            <div className="label">Additional networks</div>
+                            <div className="value mono" style={{ fontSize: 13, color: 'var(--accent-dim)' }}>
+                              ▲ {extraNetworks(selectedPeer.allowedIps).join(', ')}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="editor-placeholder">Select a peer on the left.</div>
@@ -525,10 +600,14 @@ export function WireGuard() {
                   <label>Allowed IPs (CIDR)</label>
                   <input value={allowedIps} onChange={(e) => setAllowedIps(e.target.value)} placeholder="10.8.0.2/32" />
                 </div>
+                <div className="field">
+                  <label>Group (optional)</label>
+                  <input value={peerGroup} onChange={(e) => setPeerGroup(e.target.value)} placeholder="office" title="Clusters this peer with others sharing the same group in the network views" />
+                </div>
               </div>
               <ActionButton
                 actionId="wireguard.peerAdd"
-                params={() => ({ interfaceName: selectedInterface, peerName, allowedIps })}
+                params={() => ({ interfaceName: selectedInterface, peerName, allowedIps, group: peerGroup.trim() || undefined })}
                 label="Add peer"
                 className="primary"
                 disabled={!peerName || !allowedIps}

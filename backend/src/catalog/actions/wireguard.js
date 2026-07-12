@@ -6,6 +6,15 @@ import { tryHelperCheck } from '../../services/tryHelperCheck.js';
 
 const peerNameToken = /^[A-Za-z0-9._-]+$/;
 const cidrIpv4 = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$/;
+// A peer's AllowedIPs is a comma-separated list in real WireGuard configs
+// (gateway peers route more than just their own /32 — see isGatewayPeer on
+// the frontend) — a single-CIDR-only schema would reject re-submitting an
+// existing gateway peer's value unchanged, so peer add/update both accept
+// the list form; only the interface's own serverAddress is genuinely single.
+const allowedIpsList = z.string().refine(
+  (v) => v.split(',').map((s) => s.trim()).filter(Boolean).length > 0 && v.split(',').every((s) => cidrIpv4.test(s.trim())),
+  { message: 'Must be a comma-separated list of CIDR blocks, e.g. 10.8.0.2/32, 192.168.50.0/24' }
+);
 // Interface names this tool manages are restricted to the wgN convention —
 // must match validate_wg_interface_name in scripts/lib/common.sh exactly.
 const interfaceNameToken = /^wg[0-9]{1,3}$/;
@@ -127,6 +136,10 @@ function parseStatus(stdout) {
         latestHandshake: parts[5] === '0' ? null : parts[5],
         rxBytes: Number(parts[6] ?? 0),
         txBytes: Number(parts[7] ?? 0),
+        // Arbitrary user-assigned label from a "# group: <name>" comment
+        // (same convention as "# name:") — purely a display/clustering
+        // hint for the network views, null when unset.
+        group: parts[8] || null,
       });
     }
   }
@@ -176,7 +189,11 @@ const peerList = defineAction({
 const peerAddSchema = z.object({
   interfaceName: interfaceNameSchema,
   peerName: z.string().min(1).max(64).regex(peerNameToken),
-  allowedIps: z.string().regex(cidrIpv4),
+  allowedIps: allowedIpsList,
+  // Arbitrary user-assigned label written as a "# group: <name>" comment —
+  // purely a clustering hint for the network views, WireGuard itself never
+  // reads it.
+  group: z.string().max(64).regex(peerNameToken).optional(),
 });
 
 function parsePeerAddOutput(stdout) {
@@ -205,13 +222,56 @@ const peerAdd = defineAction({
   },
   async apply(params, detectResult) {
     if (detectResult.exists) return { alreadySatisfied: true };
-    const result = await runHelperScript('WIREGUARD_PEER_ADD', [params.interfaceName, params.peerName, params.allowedIps]);
+    const args = [params.interfaceName, params.peerName, params.allowedIps];
+    if (params.group) args.push(params.group);
+    const result = await runHelperScript('WIREGUARD_PEER_ADD', args);
     if (!result.success) {
       throw new Error(`wireguard_peer_add failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
     }
     const parsed = parsePeerAddOutput(result.stdout);
     // The client private key is returned exactly once here and never persisted server-side.
     return { alreadySatisfied: false, ...parsed };
+  },
+});
+
+const peerUpdateSchema = z.object({
+  interfaceName: interfaceNameSchema,
+  peerName: z.string().min(1).max(64).regex(peerNameToken), // current name
+  newPeerName: z.string().min(1).max(64).regex(peerNameToken),
+  allowedIps: allowedIpsList,
+  // Empty/omitted clears any existing group for this peer — the edit form
+  // always submits the field's current value, so "blank" is a deliberate clear.
+  group: z.string().max(64).regex(peerNameToken).optional(),
+});
+
+const peerUpdate = defineAction({
+  id: 'wireguard.peerUpdate',
+  category: 'wireguard',
+  label: 'Edit a WireGuard peer',
+  paramsSchema: peerUpdateSchema,
+  async detect(params) {
+    const result = await runHelperScript('WIREGUARD_STATUS', ['show', params.interfaceName]);
+    const existing = result.success ? parseStatus(result.stdout).peers : [];
+    return {
+      exists: existing.some((p) => p.name === params.peerName),
+      nameCollision: params.newPeerName !== params.peerName && existing.some((p) => p.name === params.newPeerName),
+    };
+  },
+  async plan(params, detectResult) {
+    if (!detectResult.exists) throw new Error(`No such peer: ${params.peerName}`);
+    if (detectResult.nameCollision) throw new Error(`A peer named ${params.newPeerName} already exists`);
+    return { description: `Update peer ${params.peerName} on ${params.interfaceName} (public key unchanged)` };
+  },
+  async apply(params, detectResult) {
+    if (!detectResult.exists) throw new Error(`No such peer: ${params.peerName}`);
+    if (detectResult.nameCollision) throw new Error(`A peer named ${params.newPeerName} already exists`);
+    const args = [params.interfaceName, params.peerName, params.newPeerName, params.allowedIps];
+    if (params.group) args.push(params.group);
+    const result = await runHelperScript('WIREGUARD_PEER_UPDATE', args);
+    if (!result.success) {
+      throw new Error(`wireguard_peer_update failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
+    }
+    return { stdout: result.stdout.trim() };
   },
 });
 
@@ -367,6 +427,7 @@ export const wireguardActions = [
   status,
   peerList,
   peerAdd,
+  peerUpdate,
   peerRemove,
   getConfigRaw,
   setConfigRaw,
