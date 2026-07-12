@@ -14,21 +14,22 @@ Restart=on-failure
 RestartSec=3
 
 # --- Sandboxing ---
-# NoNewPrivileges is intentionally NOT set: this process invokes `sudo` to run
-# the whitelisted root-owned helper scripts, and sudo needs the setuid-root
-# privilege transition to work at all. NoNewPrivileges=true would silently
-# break every privileged action. Everything else below still applies.
+# This process invokes `sudo` to run the whitelisted root-owned helper
+# scripts, and sudo needs the setuid-root privilege transition to work at
+# all — so the unit-wide "no new privileges" kernel flag must stay off.
+# NoNewPrivileges=true is NOT set here, deliberately. Just as important:
+# several *other* systemd sandboxing directives silently force that same
+# flag on even without setting it directly — ProtectKernelTunables=,
+# ProtectKernelModules=, LockPersonality=, RestrictRealtime=, and
+# RestrictSUIDSGID= all imply NoNewPrivileges=yes per systemd.exec(5) the
+# moment they're enabled. Do not add any of those to this unit; they will
+# break every privileged action with "sudo: the 'no new privileges' flag is
+# set" even though NoNewPrivileges itself was never touched. Only directives
+# confirmed NOT to carry that implication are used below.
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/vps-console/backend/data
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=false
-LockPersonality=true
-RestrictRealtime=true
-SystemCallArchitectures=native
 
 # Bind to 127.0.0.1 only (see backend/.env HOST) — public exposure, if any,
 # happens exclusively through the NGINX TLS reverse proxy or an SSH tunnel.
