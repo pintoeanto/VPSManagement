@@ -64,7 +64,7 @@ export function Files() {
             <button onClick={goUp} disabled={dir === '.'}>
               Up
             </button>
-            <label className="primary" style={{ background: 'var(--accent-dim)', color: '#04140f', padding: '7px 14px', borderRadius: 6, cursor: 'pointer' }}>
+            <label className="primary" style={{ background: 'var(--accent-dim)', color: 'var(--accent-contrast)', padding: '6px 12px', borderRadius: 5, cursor: 'pointer' }}>
               {uploading ? 'Uploading…' : 'Upload'}
               <input ref={fileInputRef} type="file" onChange={handleUpload} style={{ display: 'none' }} disabled={uploading} />
             </label>

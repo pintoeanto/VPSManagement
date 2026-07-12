@@ -26,7 +26,7 @@ current_name=""
 while IFS= read -r line; do
   if [[ "$line" =~ ^#\ name:\ (.+)$ ]]; then
     current_name="${BASH_REMATCH[1]}"
-  elif [[ "$line" =~ ^PublicKey[[:space:]]*=[[:space:]]*(.+)$ ]] && [[ -n "$current_name" ]]; then
+  elif [[ "$line" =~ ^[Pp]ublic[Kk]ey[[:space:]]*=[[:space:]]*(.+)$ ]] && [[ -n "$current_name" ]]; then
     NAME_OF["${BASH_REMATCH[1]}"]="$current_name"
     current_name=""
   fi

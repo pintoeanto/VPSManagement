@@ -178,6 +178,66 @@ const peerAdd = defineAction({
   },
 });
 
+// Must match the sentinel literal in scripts/wireguard_config.sh exactly.
+const PRIVATE_KEY_SENTINEL = '<REDACTED>';
+
+function redactPrivateKey(content) {
+  // Case-insensitive to match: WireGuard's own parser treats key names as
+  // case-insensitive, and real-world configs on the target box mix
+  // "PublicKey"/"publicKey" — a case-sensitive match here would silently
+  // leak the real private key to the browser for any config not using the
+  // exact canonical casing. Every match gets redacted (there should only
+  // ever be one PrivateKey line, but never assume).
+  return content.replace(/^[Pp]rivate[Kk]ey\s*=.*$/gm, `PrivateKey = ${PRIVATE_KEY_SENTINEL}`);
+}
+
+const getConfigRaw = defineAction({
+  id: 'wireguard.getConfigRaw',
+  category: 'wireguard',
+  label: 'Get raw wg0.conf (private key redacted)',
+  mutating: false,
+  paramsSchema: z.object({}),
+  async detect() {
+    const result = await runHelperScript('WIREGUARD_CONFIG', ['get']);
+    if (!result.success) return { exists: false, content: null };
+    return { exists: true, content: redactPrivateKey(result.stdout) };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
+const setConfigRawSchema = z.object({ content: z.string().min(1).max(200_000) });
+
+const setConfigRaw = defineAction({
+  id: 'wireguard.setConfigRaw',
+  category: 'wireguard',
+  label: 'Edit raw wg0.conf',
+  paramsSchema: setConfigRawSchema,
+  async detect() {
+    const result = await runHelperScript('WIREGUARD_CONFIG', ['get']);
+    return { exists: result.success };
+  },
+  async plan(params, detectResult) {
+    if (!detectResult.exists) throw new Error('wg0.conf does not exist; run wireguard.initInterface first');
+    return { description: 'Overwrite wg0.conf (validated with wg-quick strip before activating; live peers re-synced if the interface is up)' };
+  },
+  async apply(params) {
+    // The client normally echoes back the redacted sentinel for an unrelated
+    // edit; scripts/wireguard_config.sh splices the real key back in when it
+    // sees that literal. Supplying a real key value instead genuinely rotates it.
+    const result = await runHelperScript('WIREGUARD_CONFIG', ['setraw'], { timeoutMs: 30_000, input: params.content });
+    if (!result.success) {
+      throw new Error(`wireguard_config setraw failed validation, rolled back (exit ${result.exitCode}): ${result.stderr.trim()}`);
+    }
+    const getResult = await runHelperScript('WIREGUARD_CONFIG', ['get']);
+    return { stdout: result.stdout.trim(), content: getResult.success ? redactPrivateKey(getResult.stdout) : null };
+  },
+});
+
 const peerRemoveSchema = z.object({ peerName: z.string().min(1).max(64).regex(peerNameToken) });
 
 const peerRemove = defineAction({
@@ -204,4 +264,14 @@ const peerRemove = defineAction({
   },
 });
 
-export const wireguardActions = [detect, install, initInterface, status, peerList, peerAdd, peerRemove];
+export const wireguardActions = [
+  detect,
+  install,
+  initInterface,
+  status,
+  peerList,
+  peerAdd,
+  peerRemove,
+  getConfigRaw,
+  setConfigRaw,
+];

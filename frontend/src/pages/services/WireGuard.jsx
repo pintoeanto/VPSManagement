@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../../api/client.js';
 import { usePolling } from '../../hooks/usePolling.js';
 import { StatusBadge } from '../../components/StatusBadge.jsx';
 import { ActionButton } from '../../components/ActionButton.jsx';
+import { NetworkDiagram, STATUS, peerStatus } from '../../components/NetworkDiagram.jsx';
 
 export function WireGuard() {
   const { data: detect, refresh: refreshDetect } = usePolling(() => api.detectAction('wireguard.detect', {}), 10000);
@@ -13,6 +14,13 @@ export function WireGuard() {
   const [peerName, setPeerName] = useState('');
   const [allowedIps, setAllowedIps] = useState('10.8.0.2/32');
   const [newPeer, setNewPeer] = useState(null);
+
+  // Explorer selection: 'config' (the raw wg0.conf editor) or a peer name.
+  const [selected, setSelected] = useState('config');
+  const [content, setContent] = useState('');
+  const [loadingContent, setLoadingContent] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   function refreshAll() {
     refreshDetect();
@@ -25,6 +33,35 @@ export function WireGuard() {
     }
     refreshAll();
   }
+
+  useEffect(() => {
+    if (selected !== 'config' || !status?.initialized) return;
+    let cancelled = false;
+    setLoadingContent(true);
+    api
+      .detectAction('wireguard.getConfigRaw', {})
+      .then((data) => !cancelled && setContent(data.content ?? ''))
+      .catch((err) => !cancelled && setSaveError(err.message))
+      .finally(() => !cancelled && setLoadingContent(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, status?.initialized]);
+
+  async function handleSaveConfig() {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await api.applyAction('wireguard.setConfigRaw', { content });
+      refreshAll();
+    } catch (err) {
+      setSaveError(err.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selectedPeer = (status?.peers ?? []).find((p) => p.name === selected);
 
   return (
     <div>
@@ -64,8 +101,15 @@ export function WireGuard() {
       {status?.initialized && (
         <>
           <div className="panel">
-            <h2>Interface</h2>
-            <div className="grid">
+            <div className="row between">
+              <h2 style={{ margin: 0 }}>Interface</h2>
+              <div className="row wrap">
+                <ActionButton actionId="service.control" params={{ unit: 'wg-quick@wg0', action: 'restart' }} label="Restart" onApplied={refreshAll} />
+                <ActionButton actionId="service.control" params={{ unit: 'wg-quick@wg0', action: 'stop' }} label="Stop" className="danger" onApplied={refreshAll} />
+                <ActionButton actionId="service.control" params={{ unit: 'wg-quick@wg0', action: 'start' }} label="Start" onApplied={refreshAll} />
+              </div>
+            </div>
+            <div className="grid" style={{ marginTop: 12 }}>
               <div className="stat-tile">
                 <div className="label">Listen port</div>
                 <div className="value">{status.interface?.listenPort}</div>
@@ -79,43 +123,102 @@ export function WireGuard() {
             </div>
           </div>
 
-          <div className="panel">
-            <h2>Peers</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Allowed IPs</th>
-                  <th>Endpoint</th>
-                  <th>Last handshake</th>
-                  <th>RX / TX</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(status.peers ?? []).map((p) => (
-                  <tr key={p.publicKey}>
-                    <td>{p.name}</td>
-                    <td className="mono">{p.allowedIps}</td>
-                    <td className="mono">{p.endpoint || '—'}</td>
-                    <td>{p.latestHandshake || 'never'}</td>
-                    <td className="mono">
-                      {p.rxBytes} / {p.txBytes}
-                    </td>
-                    <td>
-                      <ActionButton actionId="wireguard.peerRemove" params={{ peerName: p.name }} label="Remove" className="danger" onApplied={refreshAll} />
-                    </td>
-                  </tr>
-                ))}
-                {(!status.peers || status.peers.length === 0) && (
-                  <tr>
-                    <td colSpan={6} className="hint-text">
-                      No peers yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+          {(status.peers?.length ?? 0) > 0 && (
+            <div className="panel">
+              <h2>Network</h2>
+              <NetworkDiagram interfaceLabel="wg0" peers={status.peers} />
+            </div>
+          )}
+
+          <div className="explorer-shell">
+            <div className="explorer-sidebar">
+              <div className="explorer-header">
+                <span>WG0</span>
+              </div>
+              <div className="explorer-list">
+                <div className={`explorer-item ${selected === 'config' ? 'active' : ''}`} onClick={() => setSelected('config')}>
+                  <span className="dot on" />
+                  <span className="name">wg0.conf</span>
+                </div>
+              </div>
+              <div className="explorer-header">
+                <span>PEERS</span>
+              </div>
+              <div className="explorer-list">
+                {(status.peers ?? []).map((p) => {
+                  const st = peerStatus(p.latestHandshake);
+                  return (
+                    <div key={p.publicKey} className={`explorer-item ${selected === p.name ? 'active' : ''}`} onClick={() => setSelected(p.name)}>
+                      <span className="dot" style={{ background: STATUS[st].color }} />
+                      <span className="name">{p.name}</span>
+                    </div>
+                  );
+                })}
+                {(!status.peers || status.peers.length === 0) && <div className="explorer-empty">No peers yet.</div>}
+              </div>
+            </div>
+
+            <div className="editor-pane">
+              {selected === 'config' ? (
+                <>
+                  <div className="editor-toolbar">
+                    <span className="filename">wg0.conf</span>
+                    <button className="primary" onClick={handleSaveConfig} disabled={saving || loadingContent}>
+                      {saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                  {loadingContent ? (
+                    <div className="editor-placeholder">Loading…</div>
+                  ) : (
+                    <textarea className="editor-textarea" value={content} onChange={(e) => setContent(e.target.value)} spellCheck={false} disabled={saving} />
+                  )}
+                  {saveError && <div className="editor-error">{saveError}</div>}
+                  <div className="editor-error" style={{ background: 'transparent', color: 'var(--text-dim)' }}>
+                    The server's private key is shown as &lt;REDACTED&gt; and never sent to the browser — leave that line
+                    untouched to keep the current key, or replace it deliberately to rotate.
+                  </div>
+                </>
+              ) : selectedPeer ? (
+                <>
+                  <div className="editor-toolbar">
+                    <span className="filename">{selectedPeer.name}</span>
+                    <ActionButton actionId="wireguard.peerRemove" params={{ peerName: selectedPeer.name }} label="Remove peer" className="danger" onApplied={refreshAll} />
+                  </div>
+                  <div style={{ padding: 16 }}>
+                    <div className="grid">
+                      <div className="stat-tile">
+                        <div className="label">Status</div>
+                        <div className="value" style={{ fontSize: 14 }}>
+                          <StatusBadge status={peerStatus(selectedPeer.latestHandshake) === 'good' ? 'ok' : peerStatus(selectedPeer.latestHandshake) === 'warning' ? 'warn' : 'danger'}>
+                            {STATUS[peerStatus(selectedPeer.latestHandshake)].label}
+                          </StatusBadge>
+                        </div>
+                      </div>
+                      <div className="stat-tile">
+                        <div className="label">Allowed IPs</div>
+                        <div className="value mono" style={{ fontSize: 13 }}>
+                          {selectedPeer.allowedIps}
+                        </div>
+                      </div>
+                      <div className="stat-tile">
+                        <div className="label">Endpoint</div>
+                        <div className="value mono" style={{ fontSize: 13 }}>
+                          {selectedPeer.endpoint || 'none'}
+                        </div>
+                      </div>
+                      <div className="stat-tile">
+                        <div className="label">RX / TX</div>
+                        <div className="value mono" style={{ fontSize: 13 }}>
+                          {selectedPeer.rxBytes} / {selectedPeer.txBytes}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="editor-placeholder">Select wg0.conf or a peer on the left.</div>
+              )}
+            </div>
           </div>
 
           <div className="panel">

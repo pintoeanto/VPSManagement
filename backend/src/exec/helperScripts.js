@@ -16,6 +16,7 @@ export const HELPER_SCRIPTS = Object.freeze({
   WIREGUARD_PEER_ADD: 'wireguard_peer_add.sh',
   WIREGUARD_PEER_REMOVE: 'wireguard_peer_remove.sh',
   WIREGUARD_STATUS: 'wireguard_status.sh',
+  WIREGUARD_CONFIG: 'wireguard_config.sh',
   MOSQUITTO_INSTALL: 'mosquitto_install.sh',
   MOSQUITTO_CONFIGURE: 'mosquitto_configure.sh',
   NODEJS_INSTALL: 'nodejs_install.sh',

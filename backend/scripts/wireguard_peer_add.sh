@@ -32,9 +32,11 @@ fi
 umask 077
 client_privkey="$(wg genkey)"
 client_pubkey="$(echo "$client_privkey" | wg pubkey)"
-server_privkey="$(grep '^PrivateKey' "$CONF" | head -1 | sed 's/^PrivateKey[[:space:]]*=[[:space:]]*//')"
+# Case-insensitive: WireGuard's own parser treats key names case-
+# insensitively, and real configs on this box mix "PublicKey"/"publicKey".
+server_privkey="$(grep -i '^privatekey' "$CONF" | head -1 | sed -E 's/^[Pp]rivate[Kk]ey[[:space:]]*=[[:space:]]*//')"
 server_pubkey="$(echo "$server_privkey" | wg pubkey)"
-server_listen_port="$(grep '^ListenPort' "$CONF" | head -1 | sed 's/^ListenPort[[:space:]]*=[[:space:]]*//')"
+server_listen_port="$(grep -i '^listenport' "$CONF" | head -1 | sed -E 's/^[Ll]isten[Pp]ort[[:space:]]*=[[:space:]]*//')"
 
 backup="$(backup_file "$CONF")"
 

@@ -7,7 +7,7 @@
 #   visudo -c -f /etc/sudoers.d/vps-console   # validate before it takes effect
 #
 # These are narrow, per-script NOPASSWD grants — no wildcards, no directory
-# globs. The app user can run exactly these fourteen absolute paths as root
+# globs. The app user can run exactly these absolute paths as root
 # and nothing else. This only holds if the scripts themselves (and the
 # directory containing them) are root-owned and NOT writable by vps-console —
 # otherwise a compromised app process could rewrite a "trusted" script.
@@ -22,6 +22,7 @@ Cmnd_Alias VPS_CONSOLE_HELPERS = \
     /opt/vps-console/backend/scripts/wireguard_peer_add.sh, \
     /opt/vps-console/backend/scripts/wireguard_peer_remove.sh, \
     /opt/vps-console/backend/scripts/wireguard_status.sh, \
+    /opt/vps-console/backend/scripts/wireguard_config.sh, \
     /opt/vps-console/backend/scripts/mosquitto_install.sh, \
     /opt/vps-console/backend/scripts/mosquitto_configure.sh, \
     /opt/vps-console/backend/scripts/nodejs_install.sh, \
