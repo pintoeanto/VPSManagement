@@ -79,3 +79,16 @@ validate_safe_token() {
     exit 2
   fi
 }
+
+# validate_wg_interface_name <name>
+# WireGuard interface names this tool manages are restricted to the wgN
+# convention (wg0, wg1, ...) — tighter than validate_safe_token since this
+# value is interpolated into `wg show <name>`, `wg-quick strip <name>`, and
+# a systemd unit name (wg-quick@<name>).
+validate_wg_interface_name() {
+  local value="$1"
+  if [[ ! "$value" =~ ^wg[0-9]{1,3}$ ]]; then
+    echo "invalid interface name: $value (expected wgN)" >&2
+    exit 2
+  fi
+}

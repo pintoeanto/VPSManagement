@@ -23,6 +23,32 @@ export function formatHandshake(latestHandshake) {
   return date.toLocaleString();
 }
 
+// Relative form ("3m ago") for compact displays (topology/list views) where
+// a full timestamp doesn't fit — formatHandshake's absolute form is still
+// used in the radar's detail tooltip where there's room for it.
+export function formatHandshakeAge(latestHandshake) {
+  if (!latestHandshake) return 'never';
+  const ageSeconds = Date.now() / 1000 - Number(latestHandshake);
+  if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'never';
+  if (ageSeconds < 60) return `${Math.floor(ageSeconds)}s ago`;
+  if (ageSeconds < 3600) return `${Math.floor(ageSeconds / 60)}m ago`;
+  if (ageSeconds < 86400) return `${Math.floor(ageSeconds / 3600)}h ago`;
+  return `${Math.floor(ageSeconds / 86400)}d ago`;
+}
+
+const BYTE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+
+export function formatBytes(n) {
+  const value = Number(n);
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const exp = Math.min(BYTE_UNITS.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  return `${(value / 1024 ** exp).toFixed(exp === 0 ? 0 : 1)} ${BYTE_UNITS[exp]}`;
+}
+
+// Severity order for "worst first" sorting — the ops-triage convention: the
+// thing most likely to need attention should sort to the top.
+export const STATUS_SEVERITY = { critical: 0, warning: 1, good: 2 };
+
 // A peer whose AllowedIPs has more than one entry is routing something
 // beyond just itself (e.g. "10.200.200.13/32, 10.57.0.0/16" — that /16 is a
 // whole extra network this peer gateways into), not just a plain client.

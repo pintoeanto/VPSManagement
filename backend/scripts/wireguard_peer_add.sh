@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Usage: wireguard_peer_add.sh <peerName> <allowedIpsCidr>
-# Generates a fresh keypair for the peer, appends it to wg0.conf atomically,
-# validates with `wg-quick strip`, applies live via `wg syncconf` if the
-# interface is up, and rolls back the config on any validation failure.
-# Prints CLIENT_PRIVATE_KEY once — it is never stored server-side.
+# Usage: wireguard_peer_add.sh <interfaceName> <peerName> <allowedIpsCidr>
+# Generates a fresh keypair for the peer, appends it to <interfaceName>.conf
+# atomically, validates with `wg-quick strip`, applies live via `wg syncconf`
+# if the interface is up, and rolls back the config on any validation
+# failure. Prints CLIENT_PRIVATE_KEY once — it is never stored server-side.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
 require_root
-require_arg_count 2 "$#"
+require_arg_count 3 "$#"
 
-peer_name="$1"
-allowed_ips="$2"
-CONF=/etc/wireguard/wg0.conf
+interface_name="$1"
+peer_name="$2"
+allowed_ips="$3"
+validate_wg_interface_name "$interface_name"
+CONF="/etc/wireguard/${interface_name}.conf"
 
 validate_safe_token "$peer_name"
 if [[ ! "$allowed_ips" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
@@ -21,7 +23,7 @@ if [[ ! "$allowed_ips" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
   exit 2
 fi
 if [[ ! -f "$CONF" ]]; then
-  echo "wg0.conf does not exist; run wireguard.initInterface first" >&2
+  echo "${interface_name}.conf does not exist; run wireguard.initInterface first" >&2
   exit 1
 fi
 if grep -q "^# name: ${peer_name}\$" "$CONF"; then
@@ -50,15 +52,15 @@ backup="$(backup_file "$CONF")"
 } | atomic_write "$CONF"
 chmod 600 "$CONF"
 
-if ! stripped="$(wg-quick strip wg0 2>&1)"; then
+if ! stripped="$(wg-quick strip "$interface_name" 2>&1)"; then
   restore_backup "$CONF" "$backup"
   echo "wg config invalid after adding peer, rolled back: $stripped" >&2
   exit 1
 fi
 
-if wg show wg0 >/dev/null 2>&1; then
+if wg show "$interface_name" >/dev/null 2>&1; then
   sync_err="$(mktemp)"
-  if ! echo "$stripped" | wg syncconf wg0 /dev/stdin 2>"$sync_err"; then
+  if ! echo "$stripped" | wg syncconf "$interface_name" /dev/stdin 2>"$sync_err"; then
     err="$(cat "$sync_err")"
     rm -f "$sync_err"
     restore_backup "$CONF" "$backup"

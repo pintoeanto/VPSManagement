@@ -470,6 +470,37 @@ pre.code-block {
   overflow-y: auto;
 }
 
+.view-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.view-tabs button {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.view-tabs button:hover {
+  color: var(--text);
+  background: var(--bg-panel-raised);
+}
+.view-tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .explorer-tabs {
   display: flex;
   border-bottom: 1px solid var(--border);

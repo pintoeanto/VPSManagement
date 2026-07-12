@@ -17,15 +17,19 @@ async function tryRunHelper(key, args) {
   }
 }
 
-export async function checkFirewallPort(port) {
+export async function checkFirewallPort(port, protocol = 'tcp') {
   const [ufwResult, listenResult] = await Promise.all([
     tryRunHelper('UFW_RULE', ['status']),
-    tryRunHelper('PORT_CHECK', [String(port)]),
+    tryRunHelper('PORT_CHECK', [String(port), protocol]),
   ]);
-  const ufwAllowed = ufwResult.success && new RegExp(`(^|\\s)${port}(/tcp)?\\s+ALLOW`, 'im').test(ufwResult.stdout);
+  // A bare "51820 ALLOW" ufw rule (no /tcp or /udp suffix) opens both
+  // protocols, so it counts as a match for either check; a suffixed rule
+  // only counts for its own protocol.
+  const ufwAllowed = ufwResult.success && new RegExp(`(^|\\s)${port}(/${protocol})?\\s+ALLOW`, 'im').test(ufwResult.stdout);
   const listening = listenResult.success && listenResult.stdout.trim().length > 0;
   return {
     port,
+    protocol,
     ufwAllowed,
     listening,
     listenInfo: listening ? listenResult.stdout.trim() : null,

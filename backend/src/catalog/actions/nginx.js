@@ -4,6 +4,7 @@ import { execReadOnly, runHelperScript } from '../../exec/sudoExec.js';
 import { classifyDnsStatus, checkTcp, checkHttp } from '../../services/networkDiagnostics.js';
 import { checkFirewallPort } from '../../services/firewallCheck.js';
 import { parseSiteConfig } from '../../services/nginxSiteParser.js';
+import { tryHelperCheck } from '../../services/tryHelperCheck.js';
 
 const hostnameToken = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 // Broader than hostnameToken: matches the literal filename under
@@ -378,18 +379,6 @@ async function checkCertStatus(name) {
   const expiryMs = Date.parse(expiry);
   const daysRemaining = Number.isNaN(expiryMs) ? null : Math.floor((expiryMs - Date.now()) / 86_400_000);
   return { status: 'valid', certPath, expiry, daysRemaining };
-}
-
-// Read-only, best-effort — mirrors runHelperScript's contract everywhere
-// else in this file (spawn-level failures throw), but this is one check
-// among several run together for a single "route check" result, so a hard
-// throw here must not blank out every other check alongside it.
-async function tryHelperCheck(fn, fallback) {
-  try {
-    return await fn();
-  } catch (err) {
-    return { ...fallback, error: err.message };
-  }
 }
 
 const checkSiteSchema = z.object({ name: z.string().min(1).max(122).regex(siteNameToken) });

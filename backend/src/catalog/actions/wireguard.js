@@ -1,9 +1,15 @@
 import { z } from 'zod';
 import { defineAction } from '../types.js';
 import { execReadOnly, runHelperScript } from '../../exec/sudoExec.js';
+import { checkFirewallPort } from '../../services/firewallCheck.js';
+import { tryHelperCheck } from '../../services/tryHelperCheck.js';
 
 const peerNameToken = /^[A-Za-z0-9._-]+$/;
 const cidrIpv4 = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$/;
+// Interface names this tool manages are restricted to the wgN convention —
+// must match validate_wg_interface_name in scripts/lib/common.sh exactly.
+const interfaceNameToken = /^wg[0-9]{1,3}$/;
+const interfaceNameSchema = z.string().regex(interfaceNameToken, 'Interface name must look like wg0, wg1, ...');
 
 async function detectWireguard() {
   const [wgCheck, dpkg] = await Promise.all([
@@ -43,7 +49,7 @@ const install = defineAction({
   },
   async apply(_params, detectResult) {
     if (detectResult.installed) return { alreadySatisfied: true, ...detectResult };
-    const result = await runHelperScript('WIREGUARD_INSTALL', [], { timeoutMs: 120_000 });
+    const result = await runHelperScript('WIREGUARD_INSTALL', ['wg0'], { timeoutMs: 120_000 });
     if (!result.success) {
       throw new Error(`wireguard_install failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
     }
@@ -52,6 +58,7 @@ const install = defineAction({
 });
 
 const initInterfaceSchema = z.object({
+  interfaceName: interfaceNameSchema,
   listenPort: z.coerce.number().int().min(1).max(65535).default(51820),
   serverAddress: z.string().regex(cidrIpv4).default('10.8.0.1/24'),
 });
@@ -59,21 +66,48 @@ const initInterfaceSchema = z.object({
 const initInterface = defineAction({
   id: 'wireguard.initInterface',
   category: 'wireguard',
-  label: 'Initialize wg0 server interface',
+  label: 'Initialize a WireGuard tunnel interface',
   paramsSchema: initInterfaceSchema,
   async detect() {
     const check = await execReadOnly('command', ['-v', 'wg']);
     return { binaryFound: check.success };
   },
   async plan(params) {
-    return { description: `Initialize wg0 with ${params.serverAddress} on port ${params.listenPort} (no-op if already initialized)` };
+    return { description: `Initialize ${params.interfaceName} with ${params.serverAddress} on port ${params.listenPort} (no-op if already initialized)` };
   },
   async apply(params) {
-    const result = await runHelperScript('WIREGUARD_INSTALL', [String(params.listenPort), params.serverAddress]);
+    const result = await runHelperScript('WIREGUARD_INSTALL', [params.interfaceName, String(params.listenPort), params.serverAddress]);
     if (!result.success) {
       throw new Error(`wireguard init failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
     }
     return { alreadySatisfied: result.stdout.includes('already initialized'), stdout: result.stdout.trim() };
+  },
+});
+
+const listInterfaces = defineAction({
+  id: 'wireguard.listInterfaces',
+  category: 'wireguard',
+  label: 'List WireGuard tunnels',
+  mutating: false,
+  paramsSchema: z.object({}),
+  async detect() {
+    const result = await runHelperScript('WIREGUARD_STATUS', ['list']);
+    if (!result.success) return { interfaces: [] };
+    const interfaces = result.stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [name, up, listenPort, peerCount] = line.split('\t');
+        return { name, up: up === '1', listenPort: listenPort ? Number(listenPort) : null, peerCount: Number(peerCount) || 0 };
+      });
+    return { interfaces };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
   },
 });
 
@@ -99,14 +133,16 @@ function parseStatus(stdout) {
   return status;
 }
 
+const interfaceOnlySchema = z.object({ interfaceName: interfaceNameSchema });
+
 const status = defineAction({
   id: 'wireguard.status',
   category: 'wireguard',
   label: 'WireGuard interface + peer status',
   mutating: false,
-  paramsSchema: z.object({}),
-  async detect() {
-    const result = await runHelperScript('WIREGUARD_STATUS', []);
+  paramsSchema: interfaceOnlySchema,
+  async detect(params) {
+    const result = await runHelperScript('WIREGUARD_STATUS', ['show', params.interfaceName]);
     if (!result.success) return { initialized: false, error: result.stderr.trim() };
     return { initialized: true, ...parseStatus(result.stdout) };
   },
@@ -123,9 +159,9 @@ const peerList = defineAction({
   category: 'wireguard',
   label: 'List WireGuard peers',
   mutating: false,
-  paramsSchema: z.object({}),
-  async detect() {
-    const result = await runHelperScript('WIREGUARD_STATUS', []);
+  paramsSchema: interfaceOnlySchema,
+  async detect(params) {
+    const result = await runHelperScript('WIREGUARD_STATUS', ['show', params.interfaceName]);
     if (!result.success) return { peers: [] };
     return { peers: parseStatus(result.stdout).peers };
   },
@@ -138,6 +174,7 @@ const peerList = defineAction({
 });
 
 const peerAddSchema = z.object({
+  interfaceName: interfaceNameSchema,
   peerName: z.string().min(1).max(64).regex(peerNameToken),
   allowedIps: z.string().regex(cidrIpv4),
 });
@@ -158,17 +195,17 @@ const peerAdd = defineAction({
   label: 'Add a WireGuard peer',
   paramsSchema: peerAddSchema,
   async detect(params) {
-    const result = await runHelperScript('WIREGUARD_STATUS', []);
+    const result = await runHelperScript('WIREGUARD_STATUS', ['show', params.interfaceName]);
     const existing = result.success ? parseStatus(result.stdout).peers : [];
     return { exists: existing.some((p) => p.name === params.peerName) };
   },
   async plan(params, detectResult) {
     if (detectResult.exists) return { description: 'Already satisfied (peer exists)', changes: [] };
-    return { description: `Add peer ${params.peerName} with allowedIps ${params.allowedIps}` };
+    return { description: `Add peer ${params.peerName} to ${params.interfaceName} with allowedIps ${params.allowedIps}` };
   },
   async apply(params, detectResult) {
     if (detectResult.exists) return { alreadySatisfied: true };
-    const result = await runHelperScript('WIREGUARD_PEER_ADD', [params.peerName, params.allowedIps]);
+    const result = await runHelperScript('WIREGUARD_PEER_ADD', [params.interfaceName, params.peerName, params.allowedIps]);
     if (!result.success) {
       throw new Error(`wireguard_peer_add failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
     }
@@ -194,11 +231,11 @@ function redactPrivateKey(content) {
 const getConfigRaw = defineAction({
   id: 'wireguard.getConfigRaw',
   category: 'wireguard',
-  label: 'Get raw wg0.conf (private key redacted)',
+  label: 'Get raw tunnel config (private key redacted)',
   mutating: false,
-  paramsSchema: z.object({}),
-  async detect() {
-    const result = await runHelperScript('WIREGUARD_CONFIG', ['get']);
+  paramsSchema: interfaceOnlySchema,
+  async detect(params) {
+    const result = await runHelperScript('WIREGUARD_CONFIG', ['get', params.interfaceName]);
     if (!result.success) return { exists: false, content: null };
     return { exists: true, content: redactPrivateKey(result.stdout) };
   },
@@ -210,35 +247,35 @@ const getConfigRaw = defineAction({
   },
 });
 
-const setConfigRawSchema = z.object({ content: z.string().min(1).max(200_000) });
+const setConfigRawSchema = z.object({ interfaceName: interfaceNameSchema, content: z.string().min(1).max(200_000) });
 
 const setConfigRaw = defineAction({
   id: 'wireguard.setConfigRaw',
   category: 'wireguard',
-  label: 'Edit raw wg0.conf',
+  label: 'Edit raw tunnel config',
   paramsSchema: setConfigRawSchema,
-  async detect() {
-    const result = await runHelperScript('WIREGUARD_CONFIG', ['get']);
+  async detect(params) {
+    const result = await runHelperScript('WIREGUARD_CONFIG', ['get', params.interfaceName]);
     return { exists: result.success };
   },
   async plan(params, detectResult) {
-    if (!detectResult.exists) throw new Error('wg0.conf does not exist; run wireguard.initInterface first');
-    return { description: 'Overwrite wg0.conf (validated with wg-quick strip before activating; live peers re-synced if the interface is up)' };
+    if (!detectResult.exists) throw new Error(`${params.interfaceName}.conf does not exist; run wireguard.initInterface first`);
+    return { description: `Overwrite ${params.interfaceName}.conf (validated with wg-quick strip before activating; live peers re-synced if the interface is up)` };
   },
   async apply(params) {
     // The client normally echoes back the redacted sentinel for an unrelated
     // edit; scripts/wireguard_config.sh splices the real key back in when it
     // sees that literal. Supplying a real key value instead genuinely rotates it.
-    const result = await runHelperScript('WIREGUARD_CONFIG', ['setraw'], { timeoutMs: 30_000, input: params.content });
+    const result = await runHelperScript('WIREGUARD_CONFIG', ['setraw', params.interfaceName], { timeoutMs: 30_000, input: params.content });
     if (!result.success) {
       throw new Error(`wireguard_config setraw failed validation, rolled back (exit ${result.exitCode}): ${result.stderr.trim()}`);
     }
-    const getResult = await runHelperScript('WIREGUARD_CONFIG', ['get']);
+    const getResult = await runHelperScript('WIREGUARD_CONFIG', ['get', params.interfaceName]);
     return { stdout: result.stdout.trim(), content: getResult.success ? redactPrivateKey(getResult.stdout) : null };
   },
 });
 
-const peerRemoveSchema = z.object({ peerName: z.string().min(1).max(64).regex(peerNameToken) });
+const peerRemoveSchema = z.object({ interfaceName: interfaceNameSchema, peerName: z.string().min(1).max(64).regex(peerNameToken) });
 
 const peerRemove = defineAction({
   id: 'wireguard.peerRemove',
@@ -246,17 +283,17 @@ const peerRemove = defineAction({
   label: 'Remove a WireGuard peer',
   paramsSchema: peerRemoveSchema,
   async detect(params) {
-    const result = await runHelperScript('WIREGUARD_STATUS', []);
+    const result = await runHelperScript('WIREGUARD_STATUS', ['show', params.interfaceName]);
     const existing = result.success ? parseStatus(result.stdout).peers : [];
     return { exists: existing.some((p) => p.name === params.peerName) };
   },
   async plan(params, detectResult) {
     if (!detectResult.exists) return { description: 'Already satisfied (no such peer)', changes: [] };
-    return { description: `Remove peer ${params.peerName}` };
+    return { description: `Remove peer ${params.peerName} from ${params.interfaceName}` };
   },
   async apply(params, detectResult) {
     if (!detectResult.exists) return { alreadySatisfied: true };
-    const result = await runHelperScript('WIREGUARD_PEER_REMOVE', [params.peerName]);
+    const result = await runHelperScript('WIREGUARD_PEER_REMOVE', [params.interfaceName, params.peerName]);
     if (!result.success) {
       throw new Error(`wireguard_peer_remove failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
     }
@@ -264,14 +301,74 @@ const peerRemove = defineAction({
   },
 });
 
+async function checkConfigSyntax(interfaceName) {
+  const result = await runHelperScript('WIREGUARD_CONFIG', ['test', interfaceName], { timeoutMs: 15_000 });
+  return { valid: result.success, output: (result.stderr || result.stdout).trim() };
+}
+
+function summarizePeerStatuses(peers) {
+  const counts = { good: 0, warning: 0, critical: 0 };
+  for (const p of peers) {
+    const age = p.latestHandshake ? Date.now() / 1000 - Number(p.latestHandshake) : Infinity;
+    if (age <= 180) counts.good++;
+    else if (age <= 600) counts.warning++;
+    else counts.critical++;
+  }
+  return counts;
+}
+
+const checkTunnel = defineAction({
+  id: 'wireguard.checkTunnel',
+  category: 'wireguard',
+  label: 'Run diagnostic checks for a WireGuard tunnel',
+  mutating: false,
+  paramsSchema: interfaceOnlySchema,
+  async detect(params) {
+    const [configSyntax, statusResult] = await Promise.all([
+      tryHelperCheck(() => checkConfigSyntax(params.interfaceName), { valid: false }),
+      runHelperScript('WIREGUARD_STATUS', ['show', params.interfaceName]).catch((err) => ({ success: false, stdout: '', stderr: err.message })),
+    ]);
+
+    const up = statusResult.success;
+    const parsed = up ? parseStatus(statusResult.stdout) : { interface: null, peers: [] };
+    const listenPort = parsed.interface ? Number(parsed.interface.listenPort) : null;
+
+    const firewall = listenPort
+      ? await tryHelperCheck(() => checkFirewallPort(listenPort, 'udp'), { port: listenPort, protocol: 'udp', ufwAllowed: false, listening: false })
+      : null;
+
+    return {
+      exists: true,
+      checkedAt: new Date().toISOString(),
+      interfaceName: params.interfaceName,
+      up,
+      upError: up ? null : statusResult.stderr?.trim() || null,
+      listenPort,
+      publicKey: parsed.interface?.publicKey ?? null,
+      peerCount: parsed.peers.length,
+      peerStatusCounts: summarizePeerStatuses(parsed.peers),
+      configSyntax,
+      firewall,
+    };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
 export const wireguardActions = [
   detect,
   install,
   initInterface,
+  listInterfaces,
   status,
   peerList,
   peerAdd,
   peerRemove,
   getConfigRaw,
   setConfigRaw,
+  checkTunnel,
 ];

@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Usage: wireguard_install.sh [listenPort] [serverAddressCidr]
+# Usage: wireguard_install.sh <interfaceName> [listenPort] [serverAddressCidr]
 # Idempotent: installs the wireguard package if missing, and initializes
-# /etc/wireguard/wg0.conf with a fresh server keypair only if it doesn't
-# already exist. Never overwrites an existing wg0.conf.
+# /etc/wireguard/<interfaceName>.conf with a fresh server keypair only if it
+# doesn't already exist. Never overwrites an existing config — this is also
+# how a new tunnel (wg1, wg2, ...) gets created, by passing a name that
+# doesn't have a config file yet.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
 require_root
 
-listen_port="${1:-51820}"
-server_address="${2:-10.8.0.1/24}"
+interface_name="${1:?interface name required}"
+listen_port="${2:-51820}"
+server_address="${3:-10.8.0.1/24}"
 
+validate_wg_interface_name "$interface_name"
 if [[ ! "$listen_port" =~ ^[0-9]+$ ]] || [[ "$listen_port" -lt 1 ]] || [[ "$listen_port" -gt 65535 ]]; then
   echo "invalid listen port: $listen_port" >&2
   exit 2
@@ -30,7 +34,9 @@ fi
 mkdir -p /etc/wireguard
 chmod 700 /etc/wireguard
 
-if [[ -f /etc/wireguard/wg0.conf ]]; then
+CONF="/etc/wireguard/${interface_name}.conf"
+
+if [[ -f "$CONF" ]]; then
   echo "already initialized"
   exit 0
 fi
@@ -38,13 +44,13 @@ fi
 umask 077
 privkey="$(wg genkey)"
 
-cat <<EOF | atomic_write /etc/wireguard/wg0.conf
+cat <<EOF | atomic_write "$CONF"
 [Interface]
 Address = ${server_address}
 ListenPort = ${listen_port}
 PrivateKey = ${privkey}
 SaveConfig = false
 EOF
-chmod 600 /etc/wireguard/wg0.conf
+chmod 600 "$CONF"
 
 echo "initialized"
