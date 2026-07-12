@@ -1,7 +1,9 @@
 import { getAction } from '../catalog/index.js';
 import { listRoutes, getRouteByConfigFileName } from '../db/nginxRoutes.js';
 import { classifyDnsStatus, checkTcp, checkHttp } from './networkDiagnostics.js';
-import { runHelperScript } from '../exec/sudoExec.js';
+import { checkFirewallPort } from './firewallCheck.js';
+
+export { checkFirewallPort };
 
 const hostnameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
@@ -90,48 +92,14 @@ export function checkDuplicateConfigFileName(name) {
 
 export const checkDns = classifyDnsStatus;
 
-export async function checkBackendReachability({ protocol, host, port, path }) {
+export async function checkBackendReachability({ protocol, host, port, path, insecureTls = false }) {
   const tcp = await checkTcp(host, port);
   let http = null;
   if (tcp.reachable) {
     const p = path && path.startsWith('/') ? path : `/${path || ''}`;
-    http = await checkHttp(`${protocol}://${host}:${port}${p}`);
+    http = await checkHttp(`${protocol}://${host}:${port}${p}`, { insecureTls });
   }
   return { tcp, http };
-}
-
-// A spawn-level failure (missing sudo binary, helper script unreadable,
-// etc.) throws from runHelperScript rather than resolving with
-// success:false — that's the right behavior for a mutating action, where
-// the caller needs to know the difference between "ran and failed" and
-// "never ran at all". But a *read-only, best-effort* validation check like
-// this one is combined with several others in a single Promise.all — one
-// hard throw there must not take down every other check's result along
-// with it, so failures are caught and turned into a graceful "couldn't
-// determine" state instead of propagating.
-async function tryRunHelper(key, args) {
-  try {
-    return await runHelperScript(key, args);
-  } catch (err) {
-    return { success: false, stdout: '', stderr: err.message };
-  }
-}
-
-export async function checkFirewallPort(port) {
-  const [ufwResult, listenResult] = await Promise.all([
-    tryRunHelper('UFW_RULE', ['status']),
-    tryRunHelper('PORT_CHECK', [String(port)]),
-  ]);
-  const ufwAllowed = ufwResult.success && new RegExp(`(^|\\s)${port}(/tcp)?\\s+ALLOW`, 'im').test(ufwResult.stdout);
-  const listening = listenResult.success && listenResult.stdout.trim().length > 0;
-  return {
-    port,
-    ufwAllowed,
-    listening,
-    listenInfo: listening ? listenResult.stdout.trim() : null,
-    ufwStatusRaw: ufwResult.success ? ufwResult.stdout.trim() : null,
-    checkError: !ufwResult.success && !listenResult.success ? (ufwResult.stderr || listenResult.stderr) : null,
-  };
 }
 
 /**
@@ -139,7 +107,7 @@ export async function checkFirewallPort(port) {
  * validation — no side effects, safe to call repeatedly as the wizard form
  * changes.
  */
-export async function validateRouteCandidate({ hostname, configFileName, backendProtocol, backendHost, backendPort, backendBasePath }) {
+export async function validateRouteCandidate({ hostname, configFileName, backendProtocol, backendHost, backendPort, backendBasePath, ignoreBackendTlsErrors }) {
   const hostnameFormat = validateHostnameFormat(hostname);
   const fileNameFormat = validateConfigFileName(configFileName);
 
@@ -150,7 +118,7 @@ export async function validateRouteCandidate({ hostname, configFileName, backend
     checkFirewallPort(80),
     checkFirewallPort(443),
     backendHost && backendPort
-      ? checkBackendReachability({ protocol: backendProtocol || 'http', host: backendHost, port: backendPort, path: backendBasePath || '/' })
+      ? checkBackendReachability({ protocol: backendProtocol || 'http', host: backendHost, port: backendPort, path: backendBasePath || '/', insecureTls: !!ignoreBackendTlsErrors })
       : Promise.resolve(null),
   ]);
 

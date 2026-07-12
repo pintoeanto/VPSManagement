@@ -1,5 +1,7 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import http from 'node:http';
+import https from 'node:https';
 
 // Pure network diagnostics — no shell-out, no sudo. DNS resolution, TCP
 // connect, and HTTP fetch are all things any unprivileged process can do
@@ -64,32 +66,59 @@ export function checkTcp(host, port, timeoutMs = 5000) {
   });
 }
 
+// Uses node:http/node:https directly rather than the global fetch (undici):
+// undici's Agent/Dispatcher (which is what per-request rejectUnauthorized
+// would require) isn't reachable without adding `undici` as an explicit npm
+// dependency — it's neither importable as `node:undici` on this Node version
+// nor present as a bare package — whereas node:https already supports a
+// per-request `rejectUnauthorized: false` via its own Agent, with zero new
+// dependencies.
 export async function checkHttp(url, { timeoutMs = 5000, insecureTls = false } = {}) {
   const start = Date.now();
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
-      // Node's fetch (undici) honors NODE_TLS_REJECT_UNAUTHORIZED globally,
-      // not per-request; per-request TLS relaxation isn't exposed here, so
-      // "ignore backend TLS errors" is handled by the caller choosing not to
-      // use https in the check when that option is set, rather than by
-      // actually disabling cert validation for this specific request.
+  const parsed = new URL(url);
+  const transport = parsed.protocol === 'https:' ? https : http;
+  return new Promise((resolve) => {
+    const req = transport.request(
+      parsed,
+      {
+        method: 'GET',
+        timeout: timeoutMs,
+        ...(parsed.protocol === 'https:' ? { rejectUnauthorized: !insecureTls } : {}),
+      },
+      (res) => {
+        res.resume(); // discard body, we only need the status
+        res.on('end', () => {
+          resolve({
+            reachable: true,
+            httpStatus: res.statusCode,
+            responseTimeMs: Date.now() - start,
+            error: null,
+            tlsBypassed: insecureTls && parsed.protocol === 'https:',
+          });
+        });
+      }
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ reachable: false, httpStatus: null, responseTimeMs: Date.now() - start, error: 'timed out', tlsBypassed: false });
     });
-    void insecureTls;
-    return {
-      reachable: true,
-      httpStatus: res.status,
-      responseTimeMs: Date.now() - start,
-      error: null,
-    };
-  } catch (err) {
-    return {
-      reachable: false,
-      httpStatus: null,
-      responseTimeMs: Date.now() - start,
-      error: err.name === 'TimeoutError' ? 'timed out' : err.message,
-    };
-  }
+    req.on('error', (err) => {
+      // err.code carries the real reason for TLS/connection failures (e.g.
+      // 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ECONNREFUSED') — node:http's errors
+      // are direct, unlike fetch's generic "fetch failed" wrapper which hides
+      // the cause unless you know to dig into err.cause. Connection errors to
+      // a bare hostname come back as an AggregateError with an empty top-level
+      // message (Happy Eyeballs tries multiple addresses) — the real reasons
+      // are in err.errors[].
+      const detail = err.message || err.errors?.map((e) => e.message).filter(Boolean).join('; ') || '';
+      resolve({
+        reachable: false,
+        httpStatus: null,
+        responseTimeMs: Date.now() - start,
+        error: err.code ? `${err.code}${detail ? `: ${detail}` : ''}` : detail || 'request failed',
+        tlsBypassed: false,
+      });
+    });
+    req.end();
+  });
 }

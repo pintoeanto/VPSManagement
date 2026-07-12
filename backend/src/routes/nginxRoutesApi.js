@@ -18,6 +18,7 @@ const candidateSchema = z.object({
   backendHost: z.string().min(1).max(253).optional(),
   backendPort: z.coerce.number().int().min(1).max(65535).optional(),
   backendBasePath: z.string().max(500).optional(),
+  ignoreBackendTlsErrors: z.boolean().default(false),
 });
 
 nginxRoutesRouter.post('/validate', async (req, res, next) => {

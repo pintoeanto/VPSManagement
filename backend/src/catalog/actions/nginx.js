@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { defineAction } from '../types.js';
 import { execReadOnly, runHelperScript } from '../../exec/sudoExec.js';
 import { classifyDnsStatus, checkTcp, checkHttp } from '../../services/networkDiagnostics.js';
+import { checkFirewallPort } from '../../services/firewallCheck.js';
+import { parseSiteConfig } from '../../services/nginxSiteParser.js';
 
 const hostnameToken = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 // Broader than hostnameToken: matches the literal filename under
@@ -306,6 +308,7 @@ const testBackendSchema = z.object({
   host: z.string().min(1).max(253),
   port: z.coerce.number().int().min(1).max(65535),
   path: z.string().max(500).default('/'),
+  ignoreTlsErrors: z.boolean().default(false),
 });
 
 const testBackend = defineAction({
@@ -319,9 +322,132 @@ const testBackend = defineAction({
     let http = null;
     if (tcp.reachable) {
       const url = `${params.protocol}://${params.host}:${params.port}${params.path.startsWith('/') ? params.path : `/${params.path}`}`;
-      http = await checkHttp(url);
+      http = await checkHttp(url, { insecureTls: params.ignoreTlsErrors });
     }
     return { tcp, http };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
+const listAllBackups = defineAction({
+  id: 'nginx.listAllBackups',
+  category: 'nginx',
+  label: 'List NGINX config backups across all sites',
+  mutating: false,
+  paramsSchema: z.object({}),
+  async detect() {
+    const result = await runHelperScript('NGINX_CONFIGURE', ['listallbackups']);
+    if (!result.success) return { backups: [], error: result.stderr.trim() };
+    const backups = result.stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [name, backupFilename] = line.split('\t');
+        const m = backupFilename.match(/\.bak\.(\d{8}T\d{6}Z)$/);
+        return { name, backupFilename, timestamp: m ? m[1] : null };
+      })
+      .sort((a, b) => (b.timestamp ?? '').localeCompare(a.timestamp ?? ''));
+    return { backups };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
+async function checkConfigSyntax() {
+  const result = await runHelperScript('NGINX_CONFIGURE', ['test'], { timeoutMs: 15_000 });
+  return { valid: result.success, output: (result.stderr || result.stdout).trim() };
+}
+
+async function checkCertStatus(name) {
+  const result = await runHelperScript('NGINX_CONFIGURE', ['certstatus', name]);
+  if (!result.success) return { status: 'error', error: result.stderr.trim() };
+  const line = result.stdout.trim();
+  if (line === 'none' || line === 'missing' || line === 'unreadable') return { status: line };
+  const [status, certPath, expiry] = line.split('\t');
+  if (status !== 'valid') return { status: 'unknown', raw: line };
+  const expiryMs = Date.parse(expiry);
+  const daysRemaining = Number.isNaN(expiryMs) ? null : Math.floor((expiryMs - Date.now()) / 86_400_000);
+  return { status: 'valid', certPath, expiry, daysRemaining };
+}
+
+// Read-only, best-effort — mirrors runHelperScript's contract everywhere
+// else in this file (spawn-level failures throw), but this is one check
+// among several run together for a single "route check" result, so a hard
+// throw here must not blank out every other check alongside it.
+async function tryHelperCheck(fn, fallback) {
+  try {
+    return await fn();
+  } catch (err) {
+    return { ...fallback, error: err.message };
+  }
+}
+
+const checkSiteSchema = z.object({ name: z.string().min(1).max(122).regex(siteNameToken) });
+
+const checkSite = defineAction({
+  id: 'nginx.checkSite',
+  category: 'nginx',
+  label: 'Run diagnostic checks for an NGINX site',
+  mutating: false,
+  paramsSchema: checkSiteSchema,
+  async detect(params) {
+    const content = await getSiteConfig(params.name);
+    if (content === null) return { exists: false };
+
+    const parsed = parseSiteConfig(content);
+    const primaryHostname = parsed.hostnames[0] ?? null;
+    const primaryTarget = parsed.proxyTargets[0] ?? null;
+    const publicPort = parsed.hasSsl ? 443 : parsed.listens.find((l) => l.port)?.port ?? 80;
+    const publicProtocol = parsed.hasSsl ? 'https' : 'http';
+
+    const [configSyntax, dns, backend, firewall80, firewall443, certificate, publicHttp] = await Promise.all([
+      tryHelperCheck(checkConfigSyntax, { valid: false }),
+      primaryHostname ? classifyDnsStatus(primaryHostname) : Promise.resolve(null),
+      primaryTarget
+        ? (async () => {
+            const tcp = await checkTcp(primaryTarget.host, primaryTarget.port);
+            const http = tcp.reachable
+              ? await checkHttp(`${primaryTarget.protocol}://${primaryTarget.host}:${primaryTarget.port}${primaryTarget.path}`, {
+                  insecureTls: parsed.ignoreBackendTlsErrors,
+                })
+              : null;
+            return { tcp, http };
+          })()
+        : Promise.resolve(null),
+      parsed.listens.some((l) => l.port === 80) ? checkFirewallPort(80) : Promise.resolve(null),
+      parsed.listens.some((l) => l.port === 443) ? checkFirewallPort(443) : Promise.resolve(null),
+      parsed.hasSsl ? tryHelperCheck(() => checkCertStatus(params.name), { status: 'error' }) : Promise.resolve(null),
+      // End-to-end check through NGINX itself (not the backend directly) —
+      // catches proxy_pass/502 misconfigurations that a backend-only check
+      // would miss. Attempted even if DNS doesn't currently point here,
+      // since the site may still be reachable via other means (tunnel, hosts
+      // file) worth confirming.
+      primaryHostname ? checkHttp(`${publicProtocol}://${primaryHostname}:${publicPort}/`, { insecureTls: true }) : Promise.resolve(null),
+    ]);
+
+    return {
+      exists: true,
+      checkedAt: new Date().toISOString(),
+      hostnames: parsed.hostnames,
+      primaryHostname,
+      hasSsl: parsed.hasSsl,
+      configSyntax,
+      dns,
+      backend,
+      firewall: { port80: firewall80, port443: firewall443 },
+      certificate,
+      publicHttp,
+    };
   },
   async plan() {
     return { changes: [] };
@@ -369,9 +495,11 @@ export const nginxActions = [
   getSiteRaw,
   setSiteRaw,
   listBackups,
+  listAllBackups,
   getBackup,
   restoreBackup,
   testHostname,
   testBackend,
+  checkSite,
   certbotIssue,
 ];

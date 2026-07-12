@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { StatusBadge } from './StatusBadge.jsx';
 
-function dnsBadge(status) {
+export function dnsBadge(status) {
   if (status === 'passed') return { variant: 'ok', label: 'Passed' };
   if (status === 'missing') return { variant: 'danger', label: 'Missing' };
   if (status === 'points_elsewhere') return { variant: 'danger', label: 'Points elsewhere' };
@@ -17,7 +17,7 @@ function dnsBadge(status) {
  * not yet the full multi-step wizard (tabs, live progress stream, dashboard
  * cards) — that's the next milestone's UI polish pass.
  */
-export function RouteConfiguratorPanel({ onDeployed }) {
+export function RouteConfiguratorPanel({ onDeployed, prefill, prefillNonce }) {
   const [name, setName] = useState('');
   const [hostname, setHostname] = useState('');
   const [backendProtocol, setBackendProtocol] = useState('http');
@@ -25,6 +25,7 @@ export function RouteConfiguratorPanel({ onDeployed }) {
   const [backendPort, setBackendPort] = useState('');
   const [backendBasePath, setBackendBasePath] = useState('/');
   const [websocketEnabled, setWebsocketEnabled] = useState(false);
+  const [ignoreBackendTlsErrors, setIgnoreBackendTlsErrors] = useState(false);
 
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState(null);
@@ -40,6 +41,29 @@ export function RouteConfiguratorPanel({ onDeployed }) {
   const [deployResult, setDeployResult] = useState(null);
   const [deployError, setDeployError] = useState(null);
 
+  // Fired when the NGINX editor's "Test in Route Configurator" button pushes
+  // a parsed-from-raw-config candidate down — prefillNonce changes on every
+  // push (even re-pushing the same site) so this effect re-fires and resets
+  // any downstream validate/create/deploy state from a previous run.
+  useEffect(() => {
+    if (!prefill) return;
+    setName(prefill.name ?? '');
+    setHostname(prefill.hostname ?? '');
+    setBackendProtocol(prefill.backendProtocol ?? 'http');
+    setBackendHost(prefill.backendHost ?? '');
+    setBackendPort(prefill.backendPort ? String(prefill.backendPort) : '');
+    setBackendBasePath(prefill.backendBasePath ?? '/');
+    setWebsocketEnabled(!!prefill.websocketEnabled);
+    setIgnoreBackendTlsErrors(!!prefill.ignoreBackendTlsErrors);
+    setValidation(null);
+    setValidateError(null);
+    setRoute(null);
+    setCreateError(null);
+    setDeployResult(null);
+    setDeployError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillNonce]);
+
   async function handleValidate() {
     setValidating(true);
     setValidateError(null);
@@ -51,6 +75,7 @@ export function RouteConfiguratorPanel({ onDeployed }) {
         backendHost,
         backendPort: backendPort ? Number(backendPort) : undefined,
         backendBasePath,
+        ignoreBackendTlsErrors,
       });
       setValidation(result);
     } catch (err) {
@@ -73,6 +98,7 @@ export function RouteConfiguratorPanel({ onDeployed }) {
         backendPort: Number(backendPort),
         backendBasePath,
         websocketEnabled,
+        ignoreBackendTlsErrors,
       });
       setRoute(created);
     } catch (err) {
@@ -133,6 +159,13 @@ export function RouteConfiguratorPanel({ onDeployed }) {
           <select value={websocketEnabled ? '1' : '0'} onChange={(e) => setWebsocketEnabled(e.target.value === '1')}>
             <option value="0">Disabled</option>
             <option value="1">Enabled</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Ignore backend TLS errors</label>
+          <select value={ignoreBackendTlsErrors ? '1' : '0'} onChange={(e) => setIgnoreBackendTlsErrors(e.target.value === '1')}>
+            <option value="0">No — verify backend certificate</option>
+            <option value="1">Yes — backend uses a self-signed/untrusted cert</option>
           </select>
         </div>
       </div>
@@ -231,9 +264,17 @@ export function RouteConfiguratorPanel({ onDeployed }) {
                     <tr>
                       <td>Backend HTTP</td>
                       <td>
-                        <StatusBadge status={validation.backend.http.reachable ? 'ok' : 'danger'}>
-                          {validation.backend.http.reachable ? `HTTP ${validation.backend.http.httpStatus}` : validation.backend.http.error}
+                        <StatusBadge status={validation.backend.http.reachable ? (validation.backend.http.tlsBypassed ? 'warn' : 'ok') : 'danger'}>
+                          {validation.backend.http.reachable
+                            ? `HTTP ${validation.backend.http.httpStatus}${validation.backend.http.tlsBypassed ? ' (TLS verification bypassed)' : ''}`
+                            : validation.backend.http.error}
                         </StatusBadge>
+                        {!validation.backend.http.reachable && !ignoreBackendTlsErrors && /CERT|TLS|SSL/i.test(validation.backend.http.error || '') && (
+                          <p className="hint-text" style={{ marginTop: 4 }}>
+                            Looks like a certificate problem. If this backend uses a self-signed/untrusted cert on
+                            purpose, enable “Ignore backend TLS errors” above and re-validate.
+                          </p>
+                        )}
                       </td>
                     </tr>
                   )}

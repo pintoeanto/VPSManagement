@@ -6,8 +6,10 @@
 #   nginx_configure.sh list
 #   nginx_configure.sh get <name>
 #   nginx_configure.sh listbackups <name>
+#   nginx_configure.sh listallbackups
 #   nginx_configure.sh getbackup <name> <backupFilename>
 #   nginx_configure.sh restore <name> <backupFilename>
+#   nginx_configure.sh certstatus <name>
 #   nginx_configure.sh test
 #
 # <name> is the literal filename under sites-available/sites-enabled — NGINX
@@ -187,6 +189,10 @@ case "$subcommand" in
     for f in "${SITES_AVAILABLE}"/*; do
       [[ -f "$f" ]] || continue
       name="$(basename "$f")"
+      # Backup snapshots (<name>.bak.<timestamp>) live as siblings in the
+      # same directory — they are not sites and must never appear in the
+      # main list (use `listallbackups` for those).
+      [[ "$name" =~ \.bak\.[0-9]{8}T[0-9]{6}Z$ ]] && continue
       if [[ -L "${SITES_ENABLED}/${name}" ]]; then
         echo -e "${name}\t1"
       else
@@ -215,6 +221,43 @@ case "$subcommand" in
       [[ -f "$f" ]] || continue
       basename "$f"
     done
+    ;;
+
+  listallbackups)
+    require_arg_count 1 "$#"
+    mkdir -p "$SITES_AVAILABLE"
+    shopt -s nullglob
+    for f in "${SITES_AVAILABLE}"/*.bak.*; do
+      [[ -f "$f" ]] || continue
+      backup_name="$(basename "$f")"
+      [[ "$backup_name" =~ ^(.+)\.bak\.[0-9]{8}T[0-9]{6}Z$ ]] || continue
+      echo -e "${BASH_REMATCH[1]}\t${backup_name}"
+    done
+    ;;
+
+  certstatus)
+    require_arg_count 2 "$#"
+    name="$2"
+    validate_site_name "$name"
+    target="${SITES_AVAILABLE}/${name}"
+    if [[ ! -f "$target" ]]; then
+      exit 1
+    fi
+    cert_path="$(grep -oP '(?<=ssl_certificate\s)\S+(?=;)' "$target" | head -n1 || true)"
+    if [[ -z "$cert_path" ]]; then
+      echo "none"
+      exit 0
+    fi
+    if [[ ! -f "$cert_path" ]]; then
+      echo "missing"
+      exit 0
+    fi
+    expiry="$(openssl x509 -enddate -noout -in "$cert_path" 2>/dev/null | sed 's/notAfter=//')"
+    if [[ -z "$expiry" ]]; then
+      echo "unreadable"
+      exit 0
+    fi
+    echo -e "valid\t${cert_path}\t${expiry}"
     ;;
 
   getbackup)
