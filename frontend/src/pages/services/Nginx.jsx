@@ -3,6 +3,7 @@ import { api } from '../../api/client.js';
 import { usePolling } from '../../hooks/usePolling.js';
 import { StatusBadge } from '../../components/StatusBadge.jsx';
 import { ActionButton } from '../../components/ActionButton.jsx';
+import { RouteConfiguratorPanel } from '../../components/RouteConfiguratorPanel.jsx';
 
 function safeNameFromFilename(filename) {
   return filename
@@ -267,6 +268,8 @@ export function Nginx() {
         </div>
         <p className="hint-text">Used when issuing certs from the editor toolbar above.</p>
       </div>
+
+      <RouteConfiguratorPanel onDeployed={refreshAll} />
     </div>
   );
 }

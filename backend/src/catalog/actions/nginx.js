@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineAction } from '../types.js';
 import { execReadOnly, runHelperScript } from '../../exec/sudoExec.js';
-import { resolveHostname, getPublicIp, checkTcp, checkHttp } from '../../services/networkDiagnostics.js';
+import { classifyDnsStatus, checkTcp, checkHttp } from '../../services/networkDiagnostics.js';
 
 const hostnameToken = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 // Broader than hostnameToken: matches the literal filename under
@@ -291,14 +291,7 @@ const testHostname = defineAction({
   mutating: false,
   paramsSchema: testHostnameSchema,
   async detect(params) {
-    const [dnsResult, publicIp] = await Promise.all([resolveHostname(params.hostname), getPublicIp()]);
-    let status;
-    if (!dnsResult.resolved) status = 'missing';
-    else if (!publicIp) status = 'unknown';
-    else if (dnsResult.addresses.length > 1) status = 'multiple_records';
-    else if (dnsResult.addresses[0] === publicIp) status = 'passed';
-    else status = 'points_elsewhere';
-    return { resolvedAddresses: dnsResult.addresses, vpsPublicIp: publicIp, status };
+    return classifyDnsStatus(params.hostname);
   },
   async plan() {
     return { changes: [] };

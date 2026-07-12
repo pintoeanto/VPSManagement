@@ -15,15 +15,62 @@ const COLUMNS = [
   'support_email', 'support_phone', 'portal_url', 'notes',
 ];
 
+// Single source of truth for snake_case (SQLite columns) <-> camelCase (JS
+// consumers — the config generator and deploy orchestrator read route.*
+// exclusively in camelCase). Every row returned from this module carries
+// BOTH forms of every field: the raw snake_case columns (spread from the
+// row as-is, which is what the REST API has always returned to the
+// frontend) plus a complete set of camelCase aliases generated from this
+// map, rather than the previous handful of ad hoc aliases that silently
+// left most fields undefined for camelCase readers.
+const CAMEL_TO_COLUMN = {
+  projectName: 'project_name',
+  configFileName: 'config_file_name',
+  publicHostname: 'public_hostname',
+  backendProtocol: 'backend_protocol',
+  backendHost: 'backend_host',
+  backendPort: 'backend_port',
+  backendBasePath: 'backend_base_path',
+  healthCheckPath: 'health_check_path',
+  preserveIncomingPath: 'preserve_incoming_path',
+  websocketEnabled: 'websocket_enabled',
+  ignoreBackendTlsErrors: 'ignore_backend_tls_errors',
+  connectTimeoutSeconds: 'connect_timeout_seconds',
+  readTimeoutSeconds: 'read_timeout_seconds',
+  sendTimeoutSeconds: 'send_timeout_seconds',
+  maintenanceMode: 'maintenance_mode',
+  maintenanceMessage: 'maintenance_message',
+  maintenanceStart: 'maintenance_start',
+  maintenanceEnd: 'maintenance_end',
+  supportEmail: 'support_email',
+  supportPhone: 'support_phone',
+  portalUrl: 'portal_url',
+  certificateStatus: 'certificate_status',
+  certificateExpiry: 'certificate_expiry',
+  healthStatus: 'health_status',
+  lastHealthError: 'last_health_error',
+  consecutiveFailures: 'consecutive_failures',
+  lastDeployedAt: 'last_deployed_at',
+  lastHealthCheckAt: 'last_health_check_at',
+  lastHealthyAt: 'last_healthy_at',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
+};
+
+const BOOLEAN_COLUMNS = new Set(['preserve_incoming_path', 'websocket_enabled', 'ignore_backend_tls_errors', 'enabled', 'maintenance_mode']);
+
 function rowToRoute(row) {
   if (!row) return null;
+  const camel = {};
+  for (const [camelKey, column] of Object.entries(CAMEL_TO_COLUMN)) {
+    camel[camelKey] = BOOLEAN_COLUMNS.has(column) ? !!row[column] : row[column];
+  }
   return {
     ...row,
-    preserveIncomingPath: !!row.preserve_incoming_path,
-    websocketEnabled: !!row.websocket_enabled,
-    ignoreBackendTlsErrors: !!row.ignore_backend_tls_errors,
+    ...camel,
+    id: row.id,
+    name: row.name,
     enabled: !!row.enabled,
-    maintenanceMode: !!row.maintenance_mode,
     tags: row.tags ? JSON.parse(row.tags) : [],
   };
 }
@@ -95,38 +142,6 @@ export function updateRoute(id, fields) {
   db.prepare(`UPDATE nginx_routes SET ${sets.join(', ')} WHERE id = @id`).run(params);
   return getRoute(id);
 }
-
-const CAMEL_TO_COLUMN = {
-  projectName: 'project_name',
-  configFileName: 'config_file_name',
-  publicHostname: 'public_hostname',
-  backendProtocol: 'backend_protocol',
-  backendHost: 'backend_host',
-  backendPort: 'backend_port',
-  backendBasePath: 'backend_base_path',
-  healthCheckPath: 'health_check_path',
-  preserveIncomingPath: 'preserve_incoming_path',
-  websocketEnabled: 'websocket_enabled',
-  ignoreBackendTlsErrors: 'ignore_backend_tls_errors',
-  connectTimeoutSeconds: 'connect_timeout_seconds',
-  readTimeoutSeconds: 'read_timeout_seconds',
-  sendTimeoutSeconds: 'send_timeout_seconds',
-  maintenanceMode: 'maintenance_mode',
-  maintenanceMessage: 'maintenance_message',
-  maintenanceStart: 'maintenance_start',
-  maintenanceEnd: 'maintenance_end',
-  supportEmail: 'support_email',
-  supportPhone: 'support_phone',
-  portalUrl: 'portal_url',
-  certificateStatus: 'certificate_status',
-  certificateExpiry: 'certificate_expiry',
-  healthStatus: 'health_status',
-  lastHealthError: 'last_health_error',
-  consecutiveFailures: 'consecutive_failures',
-  lastDeployedAt: 'last_deployed_at',
-  lastHealthCheckAt: 'last_health_check_at',
-  lastHealthyAt: 'last_healthy_at',
-};
 
 export function deleteRoute(id) {
   db.prepare('DELETE FROM nginx_routes WHERE id = ?').run(id);

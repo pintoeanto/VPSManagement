@@ -144,4 +144,13 @@ export const api = {
 
   auditLog: (limit = 100) => request(`/audit?limit=${limit}`),
   auditVerify: () => request('/audit/verify'),
+
+  nginxRoutes: {
+    list: () => request('/nginx/routes'),
+    get: (id) => request(`/nginx/routes/${id}`),
+    validate: (candidate) => request('/nginx/routes/validate', { method: 'POST', body: JSON.stringify(candidate) }),
+    create: (fields) => request('/nginx/routes', { method: 'POST', body: JSON.stringify(fields) }),
+    deploy: (id, opts) => request(`/nginx/routes/${id}/deploy`, { method: 'POST', body: JSON.stringify(opts) }),
+    remove: (id) => request(`/nginx/routes/${id}`, { method: 'DELETE' }),
+  },
 };

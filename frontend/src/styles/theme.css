@@ -15,7 +15,7 @@
   --info: #005fb8;
   --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --radius: 5px;
+  --radius: 3px;
 }
 
 * {
@@ -217,7 +217,7 @@ label {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 5px;
 }
 
 .panel h2 {
@@ -232,7 +232,7 @@ label {
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+  gap: 6px;
 }
 
 .stat-tile {

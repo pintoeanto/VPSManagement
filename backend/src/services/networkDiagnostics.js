@@ -10,11 +10,11 @@ export async function resolveHostname(hostname) {
   try {
     const addresses = await dns.resolve4(hostname);
     return { resolved: true, addresses };
-  } catch (err) {
-    if (err.code === 'ENOTFOUND' || err.code === 'ENODATA') {
-      return { resolved: false, addresses: [] };
-    }
-    throw err;
+  } catch {
+    // Any resolution failure (not found, no data, timeout, server failure,
+    // ...) is equally "can't confirm DNS is set up" from the caller's
+    // point of view — never throw out of a best-effort validation check.
+    return { resolved: false, addresses: [] };
   }
 }
 
@@ -34,6 +34,20 @@ export async function getPublicIp() {
     }
   }
   return null;
+}
+
+// Shared DNS-vs-public-IP classification, used by both the standalone
+// nginx.testHostname catalog action and the route validation service so
+// they can never disagree about what "passed" means.
+export async function classifyDnsStatus(hostname) {
+  const [dnsResult, publicIp] = await Promise.all([resolveHostname(hostname), getPublicIp()]);
+  let status;
+  if (!dnsResult.resolved) status = 'missing';
+  else if (!publicIp) status = 'unknown';
+  else if (dnsResult.addresses.length > 1) status = 'multiple_records';
+  else if (dnsResult.addresses[0] === publicIp) status = 'passed';
+  else status = 'points_elsewhere';
+  return { resolvedAddresses: dnsResult.addresses, vpsPublicIp: publicIp, status };
 }
 
 export function checkTcp(host, port, timeoutMs = 5000) {

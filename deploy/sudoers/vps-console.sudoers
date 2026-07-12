@@ -18,6 +18,8 @@ Cmnd_Alias VPS_CONSOLE_HELPERS = \
     /opt/vps-console/backend/scripts/nginx_install.sh, \
     /opt/vps-console/backend/scripts/nginx_configure.sh, \
     /opt/vps-console/backend/scripts/nginx_certbot.sh, \
+    /opt/vps-console/backend/scripts/nginx_certbot_webroot.sh, \
+    /opt/vps-console/backend/scripts/port_check.sh, \
     /opt/vps-console/backend/scripts/wireguard_install.sh, \
     /opt/vps-console/backend/scripts/wireguard_peer_add.sh, \
     /opt/vps-console/backend/scripts/wireguard_peer_remove.sh, \

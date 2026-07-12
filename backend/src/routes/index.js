@@ -4,6 +4,7 @@ import { catalogRouter } from './catalogRoutes.js';
 import { metricsRouter } from './metricsRoutes.js';
 import { fileRouter } from '../fileTransfer/routes.js';
 import { auditRouter } from '../audit/routes.js';
+import { nginxRoutesRouter } from './nginxRoutesApi.js';
 
 export const apiRouter = Router();
 
@@ -12,3 +13,4 @@ apiRouter.use('/actions', catalogRouter);
 apiRouter.use('/metrics', metricsRouter);
 apiRouter.use('/files', fileRouter);
 apiRouter.use('/audit', auditRouter);
+apiRouter.use('/nginx/routes', nginxRoutesRouter);

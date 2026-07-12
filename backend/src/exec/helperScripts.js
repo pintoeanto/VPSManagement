@@ -12,6 +12,8 @@ export const HELPER_SCRIPTS = Object.freeze({
   NGINX_INSTALL: 'nginx_install.sh',
   NGINX_CONFIGURE: 'nginx_configure.sh',
   NGINX_CERTBOT: 'nginx_certbot.sh',
+  NGINX_CERTBOT_WEBROOT: 'nginx_certbot_webroot.sh',
+  PORT_CHECK: 'port_check.sh',
   WIREGUARD_INSTALL: 'wireguard_install.sh',
   WIREGUARD_PEER_ADD: 'wireguard_peer_add.sh',
   WIREGUARD_PEER_REMOVE: 'wireguard_peer_remove.sh',
