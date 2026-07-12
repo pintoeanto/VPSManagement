@@ -455,7 +455,7 @@ pre.code-block {
   display: flex;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  height: 480px;
+  height: 600px;
   margin-bottom: 16px;
   overflow: hidden;
 }

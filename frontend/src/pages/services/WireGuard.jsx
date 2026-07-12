@@ -3,7 +3,8 @@ import { api } from '../../api/client.js';
 import { usePolling } from '../../hooks/usePolling.js';
 import { StatusBadge } from '../../components/StatusBadge.jsx';
 import { ActionButton } from '../../components/ActionButton.jsx';
-import { NetworkDiagram, STATUS, peerStatus } from '../../components/NetworkDiagram.jsx';
+import { NetworkRadar } from '../../components/NetworkRadar.jsx';
+import { STATUS, peerStatus, isGatewayPeer, extraNetworks } from '../../lib/peerStatus.js';
 
 export function WireGuard() {
   const { data: detect, refresh: refreshDetect } = usePolling(() => api.detectAction('wireguard.detect', {}), 10000);
@@ -126,7 +127,7 @@ export function WireGuard() {
           {(status.peers?.length ?? 0) > 0 && (
             <div className="panel">
               <h2>Network</h2>
-              <NetworkDiagram interfaceLabel="wg0" peers={status.peers} />
+              <NetworkRadar interfaceLabel="wg0" peers={status.peers} />
             </div>
           )}
 
@@ -143,6 +144,7 @@ export function WireGuard() {
               </div>
               <div className="explorer-header">
                 <span>PEERS</span>
+                <span>{status.peers?.length ?? 0}</span>
               </div>
               <div className="explorer-list">
                 {(status.peers ?? []).map((p) => {
@@ -151,6 +153,11 @@ export function WireGuard() {
                     <div key={p.publicKey} className={`explorer-item ${selected === p.name ? 'active' : ''}`} onClick={() => setSelected(p.name)}>
                       <span className="dot" style={{ background: STATUS[st].color }} />
                       <span className="name">{p.name}</span>
+                      {isGatewayPeer(p.allowedIps) && (
+                        <span style={{ color: 'var(--accent-dim)', fontSize: 10 }} title="Routes an additional subnet">
+                          ▲
+                        </span>
+                      )}
                     </div>
                   );
                 })}
@@ -212,6 +219,14 @@ export function WireGuard() {
                           {selectedPeer.rxBytes} / {selectedPeer.txBytes}
                         </div>
                       </div>
+                      {isGatewayPeer(selectedPeer.allowedIps) && (
+                        <div className="stat-tile">
+                          <div className="label">Additional networks</div>
+                          <div className="value mono" style={{ fontSize: 13, color: 'var(--accent-dim)' }}>
+                            ▲ {extraNetworks(selectedPeer.allowedIps).join(', ')}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </>

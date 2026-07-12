@@ -5,6 +5,9 @@
 #   nginx_configure.sh remove <name>
 #   nginx_configure.sh list
 #   nginx_configure.sh get <name>
+#   nginx_configure.sh listbackups <name>
+#   nginx_configure.sh getbackup <name> <backupFilename>
+#   nginx_configure.sh restore <name> <backupFilename>
 #   nginx_configure.sh test
 #
 # <name> is the literal filename under sites-available/sites-enabled — NGINX
@@ -201,6 +204,68 @@ case "$subcommand" in
       exit 1
     fi
     cat "$target"
+    ;;
+
+  listbackups)
+    require_arg_count 2 "$#"
+    name="$2"
+    validate_site_name "$name"
+    shopt -s nullglob
+    for f in "${SITES_AVAILABLE}/${name}.bak."*; do
+      [[ -f "$f" ]] || continue
+      basename "$f"
+    done
+    ;;
+
+  getbackup)
+    require_arg_count 3 "$#"
+    name="$2"
+    backup_name="$3"
+    validate_site_name "$name"
+    if [[ ! "$backup_name" =~ ^${name//./\\.}\.bak\.[0-9]{8}T[0-9]{6}Z$ ]]; then
+      echo "invalid backup filename: $backup_name" >&2
+      exit 2
+    fi
+    target="${SITES_AVAILABLE}/${backup_name}"
+    if [[ ! -f "$target" ]]; then
+      exit 1
+    fi
+    cat "$target"
+    ;;
+
+  restore)
+    require_arg_count 3 "$#"
+    name="$2"
+    backup_name="$3"
+    validate_site_name "$name"
+    if [[ ! "$backup_name" =~ ^${name//./\\.}\.bak\.[0-9]{8}T[0-9]{6}Z$ ]]; then
+      echo "invalid backup filename: $backup_name" >&2
+      exit 2
+    fi
+    backup_source="${SITES_AVAILABLE}/${backup_name}"
+    if [[ ! -f "$backup_source" ]]; then
+      echo "backup not found: $backup_name" >&2
+      exit 1
+    fi
+
+    target="${SITES_AVAILABLE}/${name}"
+    link="${SITES_ENABLED}/${name}"
+    mkdir -p "$SITES_AVAILABLE" "$SITES_ENABLED"
+
+    # Restoring still backs up whatever is currently live first, so a
+    # restore is itself undoable the same way any other change is.
+    backup="$(backup_file "$target")"
+    link_existed=0
+    [[ -L "$link" ]] && link_existed=1
+
+    cat "$backup_source" | atomic_write "$target"
+
+    if [[ "$link_existed" -eq 0 ]]; then
+      ln -s "$target" "$link"
+    fi
+
+    validate_and_activate "$target" "$link" "$backup" "$link_existed"
+    echo "ok"
     ;;
 
   test)

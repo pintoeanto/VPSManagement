@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { defineAction } from '../types.js';
 import { execReadOnly, runHelperScript } from '../../exec/sudoExec.js';
+import { resolveHostname, getPublicIp, checkTcp, checkHttp } from '../../services/networkDiagnostics.js';
 
 const hostnameToken = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 // Broader than hostnameToken: matches the literal filename under
@@ -210,6 +211,133 @@ const setSiteRaw = defineAction({
   },
 });
 
+const listBackupsSchema = z.object({ name: z.string().min(1).max(122).regex(siteNameToken) });
+
+const listBackups = defineAction({
+  id: 'nginx.listBackups',
+  category: 'nginx',
+  label: 'List config backups for a site',
+  mutating: false,
+  paramsSchema: listBackupsSchema,
+  async detect(params) {
+    const result = await runHelperScript('NGINX_CONFIGURE', ['listbackups', params.name]);
+    const backups = result.success ? result.stdout.trim().split('\n').filter(Boolean) : [];
+    return { backups };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
+const getBackupSchema = z.object({
+  name: z.string().min(1).max(122).regex(siteNameToken),
+  backupFilename: z.string().min(1).max(200),
+});
+
+const getBackup = defineAction({
+  id: 'nginx.getBackup',
+  category: 'nginx',
+  label: 'Get a config backup file content',
+  mutating: false,
+  paramsSchema: getBackupSchema,
+  async detect(params) {
+    const result = await runHelperScript('NGINX_CONFIGURE', ['getbackup', params.name, params.backupFilename]);
+    return { exists: result.success, content: result.success ? result.stdout : null };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
+const restoreBackupSchema = z.object({
+  name: z.string().min(1).max(122).regex(siteNameToken),
+  backupFilename: z.string().min(1).max(200),
+});
+
+const restoreBackup = defineAction({
+  id: 'nginx.restoreBackup',
+  category: 'nginx',
+  label: 'Restore a site config from a backup',
+  paramsSchema: restoreBackupSchema,
+  async detect(params) {
+    const result = await runHelperScript('NGINX_CONFIGURE', ['getbackup', params.name, params.backupFilename]);
+    return { backupExists: result.success };
+  },
+  async plan(params, detectResult) {
+    if (!detectResult.backupExists) throw new Error(`Backup not found: ${params.backupFilename}`);
+    return { description: `Restore ${params.name} from ${params.backupFilename} (current live config is itself backed up first)` };
+  },
+  async apply(params) {
+    const result = await runHelperScript('NGINX_CONFIGURE', ['restore', params.name, params.backupFilename], { timeoutMs: 30_000 });
+    if (!result.success) {
+      throw new Error(`nginx_configure restore failed, rolled back (exit ${result.exitCode}): ${result.stderr.trim()}`);
+    }
+    return { stdout: result.stdout.trim(), config: await getSiteConfig(params.name) };
+  },
+});
+
+const testHostnameSchema = z.object({ hostname: z.string().max(253).regex(hostnameToken) });
+
+const testHostname = defineAction({
+  id: 'nginx.testHostname',
+  category: 'nginx',
+  label: 'Check DNS resolution against this VPS’s public IP',
+  mutating: false,
+  paramsSchema: testHostnameSchema,
+  async detect(params) {
+    const [dnsResult, publicIp] = await Promise.all([resolveHostname(params.hostname), getPublicIp()]);
+    let status;
+    if (!dnsResult.resolved) status = 'missing';
+    else if (!publicIp) status = 'unknown';
+    else if (dnsResult.addresses.length > 1) status = 'multiple_records';
+    else if (dnsResult.addresses[0] === publicIp) status = 'passed';
+    else status = 'points_elsewhere';
+    return { resolvedAddresses: dnsResult.addresses, vpsPublicIp: publicIp, status };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
+const testBackendSchema = z.object({
+  protocol: z.enum(['http', 'https']).default('http'),
+  host: z.string().min(1).max(253),
+  port: z.coerce.number().int().min(1).max(65535),
+  path: z.string().max(500).default('/'),
+});
+
+const testBackend = defineAction({
+  id: 'nginx.testBackend',
+  category: 'nginx',
+  label: 'Test backend TCP + HTTP reachability',
+  mutating: false,
+  paramsSchema: testBackendSchema,
+  async detect(params) {
+    const tcp = await checkTcp(params.host, params.port);
+    let http = null;
+    if (tcp.reachable) {
+      const url = `${params.protocol}://${params.host}:${params.port}${params.path.startsWith('/') ? params.path : `/${params.path}`}`;
+      http = await checkHttp(url);
+    }
+    return { tcp, http };
+  },
+  async plan() {
+    return { changes: [] };
+  },
+  async apply(_params, detectResult) {
+    return detectResult;
+  },
+});
+
 const certbotSchema = z.object({
   serverName: z.string().max(253).regex(hostnameToken),
   email: z.string().email(),
@@ -239,4 +367,18 @@ const certbotIssue = defineAction({
   },
 });
 
-export const nginxActions = [detect, install, listSites, configureSite, removeSite, getSiteRaw, setSiteRaw, certbotIssue];
+export const nginxActions = [
+  detect,
+  install,
+  listSites,
+  configureSite,
+  removeSite,
+  getSiteRaw,
+  setSiteRaw,
+  listBackups,
+  getBackup,
+  restoreBackup,
+  testHostname,
+  testBackend,
+  certbotIssue,
+];
