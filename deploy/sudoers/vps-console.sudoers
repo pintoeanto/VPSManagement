@@ -1,0 +1,38 @@
+# Sudoers rules for the VPS Management Console.
+#
+# Install:
+#   cp deploy/sudoers/vps-console.sudoers /etc/sudoers.d/vps-console
+#   chmod 440 /etc/sudoers.d/vps-console
+#   chown root:root /etc/sudoers.d/vps-console
+#   visudo -c -f /etc/sudoers.d/vps-console   # validate before it takes effect
+#
+# These are narrow, per-script NOPASSWD grants — no wildcards, no directory
+# globs. The app user can run exactly these fourteen absolute paths as root
+# and nothing else. This only holds if the scripts themselves (and the
+# directory containing them) are root-owned and NOT writable by vps-console —
+# otherwise a compromised app process could rewrite a "trusted" script.
+# Verify on the target host:
+#   ls -la /opt/vps-console/backend/scripts   # must show root:root, not vps-console
+
+Cmnd_Alias VPS_CONSOLE_HELPERS = \
+    /opt/vps-console/backend/scripts/nginx_install.sh, \
+    /opt/vps-console/backend/scripts/nginx_configure.sh, \
+    /opt/vps-console/backend/scripts/nginx_certbot.sh, \
+    /opt/vps-console/backend/scripts/wireguard_install.sh, \
+    /opt/vps-console/backend/scripts/wireguard_peer_add.sh, \
+    /opt/vps-console/backend/scripts/wireguard_peer_remove.sh, \
+    /opt/vps-console/backend/scripts/wireguard_status.sh, \
+    /opt/vps-console/backend/scripts/mosquitto_install.sh, \
+    /opt/vps-console/backend/scripts/mosquitto_configure.sh, \
+    /opt/vps-console/backend/scripts/nodejs_install.sh, \
+    /opt/vps-console/backend/scripts/service_ctl.sh, \
+    /opt/vps-console/backend/scripts/journalctl_tail.sh, \
+    /opt/vps-console/backend/scripts/system_update.sh, \
+    /opt/vps-console/backend/scripts/ufw_rule.sh
+
+vps-console ALL=(root) NOPASSWD: VPS_CONSOLE_HELPERS
+
+# Belt-and-braces: never allow this rule to be satisfied via a shell alias,
+# and require that sudo re-resolve the command path from the rule above
+# rather than trusting the caller's PATH.
+Defaults!VPS_CONSOLE_HELPERS !authenticate, !requiretty, secure_path="/usr/sbin:/usr/bin:/sbin:/bin"

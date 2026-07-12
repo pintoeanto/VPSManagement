@@ -1,0 +1,37 @@
+[Unit]
+Description=VPS Management Console
+After=network.target
+Documentation=https://github.com/your-org/vps-console
+
+[Service]
+Type=simple
+User=vps-console
+Group=vps-console
+WorkingDirectory=/opt/vps-console/backend
+EnvironmentFile=/opt/vps-console/backend/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=3
+
+# --- Sandboxing ---
+# NoNewPrivileges is intentionally NOT set: this process invokes `sudo` to run
+# the whitelisted root-owned helper scripts, and sudo needs the setuid-root
+# privilege transition to work at all. NoNewPrivileges=true would silently
+# break every privileged action. Everything else below still applies.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/vps-console/backend/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=false
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+# Bind to 127.0.0.1 only (see backend/.env HOST) — public exposure, if any,
+# happens exclusively through the NGINX TLS reverse proxy or an SSH tunnel.
+
+[Install]
+WantedBy=multi-user.target

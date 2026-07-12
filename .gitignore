@@ -134,3 +134,9 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# VPS Console runtime data — SQLite db, WAL files, file-transfer jail contents
+backend/data/
+*.db
+*.db-shm
+*.db-wal

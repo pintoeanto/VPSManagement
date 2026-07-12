@@ -1,0 +1,28 @@
+{
+  "name": "vps-console-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "bootstrap-admin": "node src/cli/createAdmin.js"
+  },
+  "dependencies": {
+    "argon2": "^0.41.1",
+    "better-sqlite3": "^11.5.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.2.0",
+    "otplib": "^12.0.1",
+    "qrcode": "^1.5.4",
+    "zod": "^3.23.8"
+  }
+}

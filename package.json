@@ -1,0 +1,17 @@
+{
+  "name": "vps-console",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Root dev-orchestration scripts for backend + frontend. Not published; each app has its own package.json.",
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:stop": "kill-port 6000 6001",
+    "install:all": "npm install --prefix backend && npm install --prefix frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "kill-port": "^2.0.1"
+  }
+}

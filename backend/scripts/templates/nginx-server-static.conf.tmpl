@@ -1,0 +1,15 @@
+server {
+    listen __LISTEN_PORT__;
+    listen [::]:__LISTEN_PORT__;
+    server_name __SERVER_NAME__;
+
+    root __DOC_ROOT__;
+    index index.html index.htm;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    access_log /var/log/nginx/__SERVER_NAME__.access.log;
+    error_log /var/log/nginx/__SERVER_NAME__.error.log;
+}
