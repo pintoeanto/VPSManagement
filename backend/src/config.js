@@ -18,7 +18,6 @@ const envSchema = z.object({
     .regex(/^[0-9a-fA-F]{64}$/, 'TOTP_ENC_KEY must be exactly 32 bytes as hex (64 hex chars)'),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL: z.string().default('7d'),
-  COOKIE_DOMAIN: z.string().default('localhost'),
   COOKIE_SECURE: z
     .string()
     .default('true')

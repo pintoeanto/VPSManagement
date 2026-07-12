@@ -17,7 +17,11 @@ export function issueCsrfCookie(res) {
     httpOnly: false,
     secure: config.COOKIE_SECURE,
     sameSite: 'strict',
-    domain: config.COOKIE_DOMAIN,
+    // No explicit domain: host-only cookie. This is the tighter default for
+    // a single-origin app, and it's also what lets you dev against this
+    // backend through an SSH tunnel + local Vite proxy (the browser only
+    // ever sees "localhost", so a cookie scoped to the real domain would be
+    // silently rejected).
     path: '/',
   });
   return token;
@@ -33,5 +37,5 @@ export function requireCsrf(req, res, next) {
 }
 
 export function clearCsrfCookie(res) {
-  res.clearCookie(CSRF_COOKIE, { domain: config.COOKIE_DOMAIN, path: '/' });
+  res.clearCookie(CSRF_COOKIE, { path: '/' });
 }

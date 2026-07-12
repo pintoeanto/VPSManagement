@@ -41,7 +41,7 @@ function refreshCookieOptions() {
     httpOnly: true,
     secure: config.COOKIE_SECURE,
     sameSite: 'strict',
-    domain: config.COOKIE_DOMAIN,
+    // Host-only cookie (no explicit domain) — see middleware/csrf.js for why.
     path: '/api/auth',
   };
 }

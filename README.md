@@ -90,8 +90,8 @@ cp .env.example .env
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"   # JWT_ACCESS_SECRET
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"   # JWT_REFRESH_SECRET
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # TOTP_ENC_KEY
-# Edit .env: paste the generated secrets, set HELPER_SCRIPTS_DIR=./scripts,
-# JAIL_ROOT, ALLOWED_SERVICE_UNITS, COOKIE_DOMAIN to your actual domain.
+# Edit .env: paste the generated secrets, review HELPER_SCRIPTS_DIR=./scripts,
+# JAIL_ROOT, and ALLOWED_SERVICE_UNITS.
 sudo mkdir -p /opt/vps-console/backend/data
 sudo chown -R vps-console:vps-console /opt/vps-console/backend/data /opt/vps-console/backend/.env
 ```
@@ -136,13 +136,23 @@ VPS's network interfaces beyond SSH itself.
 
 ### Option B — TLS reverse proxy (NGINX + Let's Encrypt)
 
+Two phases — certbot needs a working plain-HTTP vhost to issue a certificate
+against, so don't hand-write the HTTPS server block yourself:
+
 ```bash
 sudo cp deploy/nginx/vps-console.conf /etc/nginx/sites-available/vps-console
-# edit server_name to your real domain
+sudo sed -i 's/console.example.com/<your-domain>/g' /etc/nginx/sites-available/vps-console
 sudo ln -s /etc/nginx/sites-available/vps-console /etc/nginx/sites-enabled/
-sudo certbot --nginx -d console.example.com
 sudo nginx -t && sudo systemctl reload nginx
+
+sudo certbot --nginx -d <your-domain>
 ```
+
+Certbot finds the port-80 server block, issues the cert, duplicates the
+block onto a new `listen 443 ssl` server (same `proxy_pass` location), and
+offers to add the http→https redirect — say yes. It also runs its own
+`nginx -t` before touching anything, so a config error here never breaks
+your other sites.
 
 By default this listens on the public interface — that's fine, since
 password + TOTP + JWT (not network position) is the real security boundary,
@@ -197,6 +207,26 @@ cd frontend && npm install && npm run dev
 The Vite dev server proxies `/api` to `http://127.0.0.1:6000` (see
 `frontend/vite.config.js`). `npm run dev` is for local development only —
 never expose the Vite dev server itself beyond localhost.
+
+### Developing against a real VPS
+
+Off a real Ubuntu host, `detect()` for the OS-specific actions degrades to
+"not installed" (see below) since the actual binaries aren't there — so UI
+work on those pages is easiest done against a *real* VPS's backend instead of
+a local one. No code changes needed beyond what's already in place (cookies
+are host-only for exactly this reason):
+
+```bash
+ssh -L 6000:127.0.0.1:6000 <user>@<your-vps>   # keep this running
+cd frontend && npm run dev                      # in another terminal
+```
+
+Then open `http://localhost:6001` — Vite proxies `/api` through to
+`127.0.0.1:6000`, which the SSH tunnel forwards to the VPS's real backend.
+You get instant hot-reload on frontend edits while seeing the VPS's actual
+nginx/systemd/etc. state; the VPS's own systemd-managed backend is untouched.
+Backend changes still require deploying to the VPS and restarting the
+service — this only speeds up frontend iteration.
 
 Off a real Ubuntu host (e.g. developing on Windows/macOS), the `detect()`
 step of nginx/WireGuard/Mosquitto/Node actions degrades gracefully to "not
