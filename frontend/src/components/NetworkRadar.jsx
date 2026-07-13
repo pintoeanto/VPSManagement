@@ -108,6 +108,47 @@ function cssVar(name, fallback) {
   return v || fallback;
 }
 
+// Where a ray from (cx,cy) in `angle` direction exits the visible world
+// rect — used to place an off-screen indicator right at the edge of what's
+// currently in view. Assumes the origin is inside the rect (true for the
+// hub in all but the most extreme pans), matching the same "exit point"
+// shortcut used elsewhere in this file's confinement math.
+function rayToRectEdge(cx, cy, angle, left, right, top, bottom) {
+  const ux = Math.cos(angle);
+  const uy = Math.sin(angle);
+  let t = Infinity;
+  if (ux > 0) t = Math.min(t, (right - cx) / ux);
+  else if (ux < 0) t = Math.min(t, (left - cx) / ux);
+  if (uy > 0) t = Math.min(t, (bottom - cy) / uy);
+  else if (uy < 0) t = Math.min(t, (top - cy) / uy);
+  if (!isFinite(t) || t < 0) t = 0;
+  return { x: cx + t * ux, y: cy + t * uy };
+}
+
+// The classic RTS-minimap "something's out there" marker: a narrow,
+// elongated triangle sitting just inside the visible edge, its long axis
+// pointing straight out toward the off-screen peer(s) it represents.
+function drawEdgePointer(ctx, x, y, angle, zoom, color) {
+  const tipLen = 13 / zoom;
+  const backLen = 7 / zoom;
+  const halfWidth = 3.2 / zoom;
+  const ux = Math.cos(angle);
+  const uy = Math.sin(angle);
+  const px = -uy;
+  const py = ux;
+  const tipX = x + ux * tipLen;
+  const tipY = y + uy * tipLen;
+  const backX = x - ux * backLen;
+  const backY = y - uy * backLen;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(backX + px * halfWidth, backY + py * halfWidth);
+  ctx.lineTo(backX - px * halfWidth, backY - py * halfWidth);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
 // A held or springing-back peer's light-beam is drawn as a tapered spindle
 // instead of a uniform-width stroke — wide at the hub, wide at the dot,
 // pinched in the middle — so the more it's stretched the thinner its
@@ -303,7 +344,6 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
     let raf;
     let lastTime = performance.now();
 
-    const border = cssVar('--border', '#bdbdbd');
     const textDim = cssVar('--text-dim', '#55555a');
     const text = cssVar('--text', '#1e1e1e');
     const accent = cssVar('--accent-dim', '#0068c7');
@@ -342,14 +382,19 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr * view.zoom, 0, 0, dpr * view.zoom, dpr * view.panX, dpr * view.panY);
 
-      // Rings — fully visible at the default framing now that the hub sits
-      // at the canvas center.
-      ctx.strokeStyle = border;
-      ctx.lineWidth = 1 / view.zoom;
-      RING_FRACS.forEach((f) => {
+      // Shaded ring bands — no outline strokes at all; the three status
+      // zones (good/warning/critical) read purely as gray regions of
+      // increasing opacity, each drawn as the outer ellipse minus the
+      // previous one via the evenodd fill rule.
+      const RING_BAND_ALPHA = ['00', '11', '16']; // 0.2, 0.4, 0.6
+      RING_FRACS.forEach((f, i) => {
         ctx.beginPath();
         ctx.ellipse(cx, cy, maxRx * f, maxRy * f, 0, 0, Math.PI * 2);
-        ctx.stroke();
+        if (i > 0) {
+          ctx.ellipse(cx, cy, maxRx * RING_FRACS[i - 1], maxRy * RING_FRACS[i - 1], 0, 0, Math.PI * 2, true);
+        }
+        ctx.fillStyle = textDim + RING_BAND_ALPHA[i];
+        ctx.fill('evenodd');
       });
 
       // Center VPS node — the sun everything else orbits/worships. A slow
@@ -393,6 +438,14 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
 
       // Peers
       const hitboxes = [];
+      // Off-screen edge pointers — populated below for any peer whose ring
+      // never crosses the visible rect at all (the documented edge case in
+      // the viewport-confinement block: a peer stays on its correct ring
+      // even when that whole ring is out of view, rather than being pulled
+      // inward). Bucketed by a coarse angle so several peers hidden in
+      // roughly the same direction share one pointer instead of stacking.
+      const offscreenBuckets = new Map(); // bucketKey -> { angle, color, count }
+      const OFFSCREEN_BUCKET_RAD = 0.18;
       const map = nodeStateRef.current;
       for (const p of peers) {
         const st = map.get(p.publicKey);
@@ -641,6 +694,17 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
         const y = st.y;
         const drawAngle = Math.atan2(y - cy, x - cx);
 
+        // Still off-screen despite the confinement block above — its own
+        // ring never crosses the visible rect at this zoom/pan (e.g. the
+        // critical ring, zoomed in past where it can reach). Record it for
+        // an edge pointer instead of leaving it silently invisible.
+        if (x < visLeft || x > visRight || y < visTop || y > visBottom) {
+          const bucketKey = Math.round(drawAngle / OFFSCREEN_BUCKET_RAD);
+          const existing = offscreenBuckets.get(bucketKey);
+          if (existing) existing.count += 1;
+          else offscreenBuckets.set(bucketKey, { angle: drawAngle, color, count: 1 });
+        }
+
         // Light-beam connection to the hub — a gradient from the hub's own
         // color to the peer's status color, so it reads as light radiating
         // outward rather than a flat wire. Void (no beam at all) once the
@@ -770,6 +834,27 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
         hitboxes.push({ x, y, r: 9, peer: p, status });
       }
       hitboxesRef.current = hitboxes;
+
+      // Edge pointers — one per angle bucket that had an off-screen peer,
+      // placed right at the visible rect's boundary and inset slightly so
+      // the triangle itself stays fully on-canvas. A small count label
+      // appears when more than one peer shares a bucket.
+      if (offscreenBuckets.size > 0) {
+        const pointerInset = 14 / view.zoom;
+        for (const { angle, color, count } of offscreenBuckets.values()) {
+          const edge = rayToRectEdge(cx, cy, angle, visLeft, visRight, visTop, visBottom);
+          const px = edge.x - Math.cos(angle) * pointerInset;
+          const py = edge.y - Math.sin(angle) * pointerInset;
+          drawEdgePointer(ctx, px, py, angle, view.zoom, color);
+          if (count > 1) {
+            const labelR = 11 / view.zoom;
+            ctx.font = `${8 / view.zoom}px "SFMono-Regular", Consolas, monospace`;
+            ctx.textAlign = 'center';
+            ctx.fillStyle = color;
+            ctx.fillText(String(count), px - Math.cos(angle) * labelR, py - Math.sin(angle) * labelR + 3 / view.zoom);
+          }
+        }
+      }
 
       raf = requestAnimationFrame(draw);
     }

@@ -113,21 +113,34 @@ button.danger:hover:not(:disabled) {
   color: #fff;
 }
 
+/* Windows 11 / Fluent-style underline field: a flat fill with square
+   bottom corners and just a bottom line, not a box on all four sides — the
+   line itself carries focus state (thin+neutral idle, thicker+accent
+   focused) instead of an outline/box-shadow ring. */
 input,
 select,
 textarea {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px 9px;
+  background: var(--bg-panel-raised);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 7px 9px 6px;
   width: 100%;
+  transition: background 0.15s, border-color 0.15s;
+}
+input:hover:not(:disabled):not(:focus),
+select:hover:not(:disabled):not(:focus),
+textarea:hover:not(:disabled):not(:focus) {
+  background: var(--bg-surface);
 }
 input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--bg-surface);
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 5px;
+  box-shadow: none;
 }
 
 label {
@@ -646,6 +659,11 @@ pre.code-block {
 .editor-textarea:focus {
   outline: none;
   box-shadow: none;
+  /* Stays fully borderless even focused — it's a full-pane code editor,
+     not a form field, so the new underline-field focus style (a thicker
+     accent bottom border) must not leak in here. */
+  border-bottom: none;
+  padding: 12px;
 }
 
 .editor-placeholder {

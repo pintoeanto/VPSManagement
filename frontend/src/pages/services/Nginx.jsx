@@ -360,6 +360,22 @@ export function Nginx() {
     setSaveError(null);
   }
 
+  function cancelCreateNew() {
+    setCreatingNew(false);
+    setNewName('');
+    setContent('');
+    setSaveError(null);
+  }
+
+  // Switching back to "Route check" is enough to discard the edit — the
+  // content-loading effect below refetches fresh from the server the next
+  // time viewMode becomes 'edit' again, so the in-progress buffer is never
+  // reused stale.
+  function cancelEditConfig() {
+    setSaveError(null);
+    setViewMode('check');
+  }
+
   function handleUploadClick() {
     fileInputRef.current?.click();
   }
@@ -537,9 +553,14 @@ export function Nginx() {
                 <span className="filename">{editingName || '(untitled — type a name on the left)'}</span>
                 <div className="row wrap">
                   {creatingNew ? (
-                    <button className="primary" onClick={handleSave} disabled={saving || loadingContent}>
-                      {saving ? 'Saving…' : 'Save'}
-                    </button>
+                    <>
+                      <button className="primary" onClick={handleSave} disabled={saving || loadingContent}>
+                        {saving ? 'Saving…' : 'Save'}
+                      </button>
+                      <button onClick={cancelCreateNew} disabled={saving}>
+                        Cancel
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button className={viewMode === 'check' ? 'primary' : ''} onClick={() => setViewMode('check')}>
@@ -549,9 +570,14 @@ export function Nginx() {
                         Edit config
                       </button>
                       {viewMode === 'edit' && (
-                        <button className="primary" onClick={handleSave} disabled={saving || loadingContent}>
-                          {saving ? 'Saving…' : 'Save'}
-                        </button>
+                        <>
+                          <button className="primary" onClick={handleSave} disabled={saving || loadingContent}>
+                            {saving ? 'Saving…' : 'Save'}
+                          </button>
+                          <button onClick={cancelEditConfig} disabled={saving}>
+                            Cancel
+                          </button>
+                        </>
                       )}
                       <ActionButton
                         actionId="nginx.certbotIssue"

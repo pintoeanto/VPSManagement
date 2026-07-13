@@ -295,6 +295,15 @@ export function WireGuard() {
     }
   }
 
+  // Switching back to "Tunnel check" is enough to discard the edit — the
+  // content-loading effect below refetches fresh from the server the next
+  // time tunnelViewMode becomes 'edit' again, so the in-progress buffer is
+  // never reused stale.
+  function cancelEditConfig() {
+    setSaveError(null);
+    setTunnelViewMode('check');
+  }
+
   function startCreateTunnel() {
     setCreatingTunnel(true);
     setActiveTab('tunnels');
@@ -523,9 +532,14 @@ export function WireGuard() {
                           Edit config
                         </button>
                         {tunnelViewMode === 'edit' && (
-                          <button className="primary" onClick={handleSaveConfig} disabled={saving || loadingContent}>
-                            {saving ? 'Saving…' : 'Save'}
-                          </button>
+                          <>
+                            <button className="primary" onClick={handleSaveConfig} disabled={saving || loadingContent}>
+                              {saving ? 'Saving…' : 'Save'}
+                            </button>
+                            <button onClick={cancelEditConfig} disabled={saving}>
+                              Cancel
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
