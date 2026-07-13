@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: wireguard_peer_add.sh <interfaceName> <peerName> <allowedIpsCidr> [group]
+# Usage: wireguard_peer_add.sh <interfaceName> <peerName> <allowedIpsCidr> [group] [deviceType]
 # Generates a fresh keypair for the peer, appends it to <interfaceName>.conf
 # atomically, validates with `wg-quick strip`, applies live via `wg syncconf`
 # if the interface is up, and rolls back the config on any validation
@@ -7,13 +7,16 @@
 # [group] is an arbitrary user-assigned label (written as a "# group:"
 # comment, same convention as the existing "# name:" marker) used purely to
 # cluster peers in the network views — WireGuard itself never reads it.
+# [deviceType] is one of a fixed set (written as a "# deviceType:" comment)
+# used purely to pick an icon in the network views — WireGuard itself never
+# reads it either.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
 require_root
-if [[ "$#" -lt 3 || "$#" -gt 4 ]]; then
-  echo "wrong argument count: expected 3 or 4, got $#" >&2
+if [[ "$#" -lt 3 || "$#" -gt 5 ]]; then
+  echo "wrong argument count: expected 3 to 5, got $#" >&2
   exit 2
 fi
 
@@ -21,12 +24,19 @@ interface_name="$1"
 peer_name="$2"
 allowed_ips="$3"
 group="${4:-}"
+device_type="${5:-}"
 validate_wg_interface_name "$interface_name"
 CONF="/etc/wireguard/${interface_name}.conf"
 
 validate_safe_token "$peer_name"
 if [[ -n "$group" ]]; then
   validate_safe_token "$group"
+fi
+if [[ -n "$device_type" ]]; then
+  case "$device_type" in
+    mobile|server|pc|laptop|router) ;;
+    *) echo "invalid deviceType: $device_type" >&2; exit 2 ;;
+  esac
 fi
 validate_allowed_ips_list "$allowed_ips"
 if [[ ! -f "$CONF" ]]; then
@@ -55,6 +65,9 @@ backup="$(backup_file "$CONF")"
   echo "# name: ${peer_name}"
   if [[ -n "$group" ]]; then
     echo "# group: ${group}"
+  fi
+  if [[ -n "$device_type" ]]; then
+    echo "# deviceType: ${device_type}"
   fi
   echo "[Peer]"
   echo "PublicKey = ${client_pubkey}"

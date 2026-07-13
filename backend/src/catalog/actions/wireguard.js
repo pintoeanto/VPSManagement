@@ -5,6 +5,11 @@ import { checkFirewallPort } from '../../services/firewallCheck.js';
 import { tryHelperCheck } from '../../services/tryHelperCheck.js';
 
 const peerNameToken = /^[A-Za-z0-9._-]+$/;
+// Fixed set a peer can be tagged with (written as a "# deviceType:" comment,
+// same convention as "# group:") — purely a hint for which icon the network
+// views draw, WireGuard itself never reads it. Must match the bash-side
+// allowlist in wireguard_peer_add.sh / wireguard_peer_update.sh exactly.
+const deviceTypeSchema = z.enum(['mobile', 'server', 'pc', 'laptop', 'router']).optional();
 const cidrIpv4 = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$/;
 // A peer's AllowedIPs is a comma-separated list in real WireGuard configs
 // (gateway peers route more than just their own /32 — see isGatewayPeer on
@@ -140,6 +145,9 @@ function parseStatus(stdout) {
         // (same convention as "# name:") — purely a display/clustering
         // hint for the network views, null when unset.
         group: parts[8] || null,
+        // One of deviceTypeSchema's fixed values from a "# deviceType:"
+        // comment — purely an icon hint for the network views, null when unset.
+        deviceType: parts[9] || null,
       });
     }
   }
@@ -194,6 +202,7 @@ const peerAddSchema = z.object({
   // purely a clustering hint for the network views, WireGuard itself never
   // reads it.
   group: z.string().max(64).regex(peerNameToken).optional(),
+  deviceType: deviceTypeSchema,
 });
 
 function parsePeerAddOutput(stdout) {
@@ -222,8 +231,10 @@ const peerAdd = defineAction({
   },
   async apply(params, detectResult) {
     if (detectResult.exists) return { alreadySatisfied: true };
-    const args = [params.interfaceName, params.peerName, params.allowedIps];
-    if (params.group) args.push(params.group);
+    // Positional args from here on — group/deviceType are always passed
+    // (empty string when unset) so a deviceType can be supplied without a
+    // group, since bash can't skip a positional slot.
+    const args = [params.interfaceName, params.peerName, params.allowedIps, params.group || '', params.deviceType || ''];
     const result = await runHelperScript('WIREGUARD_PEER_ADD', args);
     if (!result.success) {
       throw new Error(`wireguard_peer_add failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
@@ -242,6 +253,7 @@ const peerUpdateSchema = z.object({
   // Empty/omitted clears any existing group for this peer — the edit form
   // always submits the field's current value, so "blank" is a deliberate clear.
   group: z.string().max(64).regex(peerNameToken).optional(),
+  deviceType: deviceTypeSchema,
 });
 
 const peerUpdate = defineAction({
@@ -265,8 +277,14 @@ const peerUpdate = defineAction({
   async apply(params, detectResult) {
     if (!detectResult.exists) throw new Error(`No such peer: ${params.peerName}`);
     if (detectResult.nameCollision) throw new Error(`A peer named ${params.newPeerName} already exists`);
-    const args = [params.interfaceName, params.peerName, params.newPeerName, params.allowedIps];
-    if (params.group) args.push(params.group);
+    const args = [
+      params.interfaceName,
+      params.peerName,
+      params.newPeerName,
+      params.allowedIps,
+      params.group || '',
+      params.deviceType || '',
+    ];
     const result = await runHelperScript('WIREGUARD_PEER_UPDATE', args);
     if (!result.success) {
       throw new Error(`wireguard_peer_update failed (exit ${result.exitCode}): ${result.stderr.trim()}`);

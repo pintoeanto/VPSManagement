@@ -229,6 +229,19 @@ label {
   margin: 0 0 12px;
 }
 
+/* "Maximize panel" — an in-app takeover of the viewport, not the browser's
+   real Fullscreen API (no permission prompt, no leaving/re-entering OS
+   fullscreen, works the same in embedded contexts). */
+.panel-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  margin: 0;
+  border-radius: 0;
+  overflow-y: auto;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

@@ -5,9 +5,10 @@
 # Read-only. `list` enumerates every /etc/wireguard/*.conf tunnel with its
 # up/down state, listen port, and peer count — the Tunnels tab reads from
 # this. `show` prints one interface's live status cross-referenced with the
-# "# name:" and optional "# group:" markers in its config (the latter is an
-# arbitrary user-assigned label for clustering peers in the network views —
-# unset for peers without one). Never prints any private key.
+# "# name:" and optional "# group:"/"# deviceType:" markers in its config
+# (group is an arbitrary user-assigned label for clustering peers in the
+# network views; deviceType is one of a fixed set used to pick an icon —
+# both unset for peers without one). Never prints any private key.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
@@ -49,23 +50,30 @@ case "$subcommand" in
       exit 1
     fi
 
-    # Build pubkey -> name/group maps from the config's "# name:"/"# group:"
-    # markers. Both are reset once consumed by the PublicKey line that
-    # follows them, so a marker only ever applies to the very next peer.
+    # Build pubkey -> name/group/deviceType maps from the config's
+    # "# name:"/"# group:"/"# deviceType:" markers. All three are reset once
+    # consumed by the PublicKey line that follows them, so a marker only
+    # ever applies to the very next peer.
     declare -A NAME_OF
     declare -A GROUP_OF
+    declare -A DEVICETYPE_OF
     current_name=""
     current_group=""
+    current_devicetype=""
     while IFS= read -r line; do
       if [[ "$line" =~ ^#\ name:\ (.+)$ ]]; then
         current_name="${BASH_REMATCH[1]}"
       elif [[ "$line" =~ ^#\ group:\ (.+)$ ]]; then
         current_group="${BASH_REMATCH[1]}"
+      elif [[ "$line" =~ ^#\ deviceType:\ (.+)$ ]]; then
+        current_devicetype="${BASH_REMATCH[1]}"
       elif [[ "$line" =~ ^[Pp]ublic[Kk]ey[[:space:]]*=[[:space:]]*(.+)$ ]]; then
         NAME_OF["${BASH_REMATCH[1]}"]="$current_name"
         GROUP_OF["${BASH_REMATCH[1]}"]="$current_group"
+        DEVICETYPE_OF["${BASH_REMATCH[1]}"]="$current_devicetype"
         current_name=""
         current_group=""
+        current_devicetype=""
       fi
     done < "$CONF"
 
@@ -84,7 +92,8 @@ case "$subcommand" in
         # peer line: pubkey presharedkey endpoint allowedips latest-handshake rx tx keepalive
         peer_name="${NAME_OF[$a]:-unknown}"
         peer_group="${GROUP_OF[$a]:-}"
-        echo -e "PEER\t${peer_name}\t${a}\t${c}\t${d}\t${e}\t${f}\t${g}\t${peer_group}"
+        peer_devicetype="${DEVICETYPE_OF[$a]:-}"
+        echo -e "PEER\t${peer_name}\t${a}\t${c}\t${d}\t${e}\t${f}\t${g}\t${peer_group}\t${peer_devicetype}"
       fi
     done <<< "$dump"
     ;;

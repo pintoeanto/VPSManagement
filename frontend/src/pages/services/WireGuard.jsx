@@ -7,7 +7,7 @@ import { NetworkRadar } from '../../components/NetworkRadar.jsx';
 import { NetworkTopology } from '../../components/NetworkTopology.jsx';
 import { NetworkIsometric } from '../../components/NetworkIsometric.jsx';
 import { NetworkList } from '../../components/NetworkList.jsx';
-import { STATUS, peerStatus, isGatewayPeer, extraNetworks } from '../../lib/peerStatus.js';
+import { STATUS, peerStatus, isGatewayPeer, extraNetworks, formatBytes, formatHandshake, DEVICE_TYPES } from '../../lib/peerStatus.js';
 
 const CHECK_TTL_MS = 5 * 60 * 1000;
 
@@ -106,6 +106,68 @@ function TunnelCheckResult({ result, checking, checkError, onRecheck }) {
   );
 }
 
+// One peer's status — same label/value table + StatusBadge layout as the
+// tunnel check above and the NGINX route check, instead of a stat-tile
+// grid, so every "status of a thing" panel in the app reads the same way.
+function PeerStatusTable({ peer }) {
+  const st = peerStatus(peer.latestHandshake);
+  const badgeVariant = st === 'good' ? 'ok' : st === 'warning' ? 'warn' : 'danger';
+  const rx = Number(peer.rxBytes) || 0;
+  const tx = Number(peer.txBytes) || 0;
+
+  return (
+    <div style={{ padding: 14, overflowY: 'auto' }}>
+      <table>
+        <tbody>
+          <tr>
+            <td>Status</td>
+            <td>
+              <StatusBadge status={badgeVariant}>{STATUS[st].label}</StatusBadge>
+            </td>
+          </tr>
+          <tr>
+            <td>Last handshake</td>
+            <td className="mono">{formatHandshake(peer.latestHandshake)}</td>
+          </tr>
+          <tr>
+            <td>Data transfer</td>
+            <td className="mono">
+              ↓ {formatBytes(rx)} received &nbsp;/&nbsp; ↑ {formatBytes(tx)} sent &nbsp;
+              <span className="hint-text">({formatBytes(rx + tx)} total)</span>
+            </td>
+          </tr>
+          <tr>
+            <td>Group</td>
+            <td className="mono">{peer.group || <span className="hint-text">none</span>}</td>
+          </tr>
+          <tr>
+            <td>Device type</td>
+            <td className="mono">
+              {DEVICE_TYPES.find((t) => t.value === peer.deviceType)?.label || <span className="hint-text">unset</span>}
+            </td>
+          </tr>
+          <tr>
+            <td>Allowed IPs</td>
+            <td className="mono">{peer.allowedIps}</td>
+          </tr>
+          <tr>
+            <td>Endpoint</td>
+            <td className="mono">{peer.endpoint || <span className="hint-text">none</span>}</td>
+          </tr>
+          {isGatewayPeer(peer.allowedIps) && (
+            <tr>
+              <td>Additional networks</td>
+              <td className="mono" style={{ color: 'var(--accent-dim)' }}>
+                ▲ {extraNetworks(peer.allowedIps).join(', ')}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function WireGuard() {
   const { data: detect, refresh: refreshDetect } = usePolling(() => api.detectAction('wireguard.detect', {}), 10000);
   const { data: interfacesData, refresh: refreshInterfaces } = usePolling(() => api.detectAction('wireguard.listInterfaces', {}), 8000);
@@ -115,6 +177,7 @@ export function WireGuard() {
   const [tunnelViewMode, setTunnelViewMode] = useState('check'); // 'check' | 'edit'
   const [selectedPeerName, setSelectedPeerName] = useState(null);
   const [networkView, setNetworkView] = useState('radar'); // 'radar' | 'topology' | 'isometric' | 'list'
+  const [networkFullscreen, setNetworkFullscreen] = useState(false);
 
   const [creatingTunnel, setCreatingTunnel] = useState(false);
   const [newInterfaceName, setNewInterfaceName] = useState('');
@@ -133,12 +196,14 @@ export function WireGuard() {
   const [peerName, setPeerName] = useState('');
   const [allowedIps, setAllowedIps] = useState('10.8.0.2/32');
   const [peerGroup, setPeerGroup] = useState('');
+  const [peerDeviceType, setPeerDeviceType] = useState('');
   const [newPeer, setNewPeer] = useState(null);
 
   const [editingPeer, setEditingPeer] = useState(false);
   const [editPeerName, setEditPeerName] = useState('');
   const [editAllowedIps, setEditAllowedIps] = useState('');
   const [editGroup, setEditGroup] = useState('');
+  const [editDeviceType, setEditDeviceType] = useState('');
 
   const interfaces = interfacesData?.interfaces ?? [];
 
@@ -158,6 +223,15 @@ export function WireGuard() {
   useEffect(() => {
     if (!selectedInterface && interfaces.length > 0) setSelectedInterface(interfaces[0].name);
   }, [interfaces, selectedInterface]);
+
+  useEffect(() => {
+    if (!networkFullscreen) return;
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setNetworkFullscreen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [networkFullscreen]);
 
   function selectTunnel(name) {
     setCreatingTunnel(false);
@@ -264,6 +338,7 @@ export function WireGuard() {
     setEditPeerName(peer.name);
     setEditAllowedIps(peer.allowedIps);
     setEditGroup(peer.group || '');
+    setEditDeviceType(peer.deviceType || '');
     setEditingPeer(true);
   }
 
@@ -310,9 +385,14 @@ export function WireGuard() {
           )}
 
           {(status?.peers?.length ?? 0) > 0 && (
-            <div className="panel">
-              <h2>Network</h2>
-              <div className="view-tabs">
+            <div className={networkFullscreen ? 'panel panel-fullscreen' : 'panel'}>
+              <div className="row between">
+                <h2 style={{ margin: 0 }}>Network</h2>
+                <button onClick={() => setNetworkFullscreen((v) => !v)} title={networkFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}>
+                  {networkFullscreen ? '⤡ Exit fullscreen' : '⤢ Fullscreen'}
+                </button>
+              </div>
+              <div className="view-tabs" style={{ marginTop: 12 }}>
                 <button className={networkView === 'radar' ? 'active' : ''} onClick={() => setNetworkView('radar')}>
                   Radar
                 </button>
@@ -326,9 +406,9 @@ export function WireGuard() {
                   List
                 </button>
               </div>
-              {networkView === 'radar' && <NetworkRadar interfaceLabel={selectedInterface} peers={status.peers} />}
+              {networkView === 'radar' && <NetworkRadar interfaceLabel={selectedInterface} peers={status.peers} fullscreen={networkFullscreen} />}
               {networkView === 'topology' && <NetworkTopology interfaceLabel={selectedInterface} peers={status.peers} />}
-              {networkView === 'isometric' && <NetworkIsometric interfaceLabel={selectedInterface} peers={status.peers} />}
+              {networkView === 'isometric' && <NetworkIsometric interfaceLabel={selectedInterface} peers={status.peers} fullscreen={networkFullscreen} />}
               {networkView === 'list' && <NetworkList peers={status.peers} />}
             </div>
           )}
@@ -489,6 +569,7 @@ export function WireGuard() {
                               newPeerName: editPeerName,
                               allowedIps: editAllowedIps,
                               group: editGroup.trim() || undefined,
+                              deviceType: editDeviceType || undefined,
                             })}
                             label="Save"
                             className="primary"
@@ -533,53 +614,21 @@ export function WireGuard() {
                           <label>Group (optional)</label>
                           <input value={editGroup} onChange={(e) => setEditGroup(e.target.value)} placeholder="office" />
                         </div>
+                        <div className="field">
+                          <label>Device type (optional)</label>
+                          <select value={editDeviceType} onChange={(e) => setEditDeviceType(e.target.value)}>
+                            <option value="">Unset</option>
+                            {DEVICE_TYPES.map((t) => (
+                              <option key={t.value} value={t.value}>
+                                {t.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     </div>
                   ) : (
-                    <div style={{ padding: 16 }}>
-                      <div className="grid">
-                        <div className="stat-tile">
-                          <div className="label">Status</div>
-                          <div className="value" style={{ fontSize: 14 }}>
-                            <StatusBadge status={peerStatus(selectedPeer.latestHandshake) === 'good' ? 'ok' : peerStatus(selectedPeer.latestHandshake) === 'warning' ? 'warn' : 'danger'}>
-                              {STATUS[peerStatus(selectedPeer.latestHandshake)].label}
-                            </StatusBadge>
-                          </div>
-                        </div>
-                        <div className="stat-tile">
-                          <div className="label">Group</div>
-                          <div className="value mono" style={{ fontSize: 13 }}>
-                            {selectedPeer.group || 'none'}
-                          </div>
-                        </div>
-                        <div className="stat-tile">
-                          <div className="label">Allowed IPs</div>
-                          <div className="value mono" style={{ fontSize: 13 }}>
-                            {selectedPeer.allowedIps}
-                          </div>
-                        </div>
-                        <div className="stat-tile">
-                          <div className="label">Endpoint</div>
-                          <div className="value mono" style={{ fontSize: 13 }}>
-                            {selectedPeer.endpoint || 'none'}
-                          </div>
-                        </div>
-                        <div className="stat-tile">
-                          <div className="label">RX / TX</div>
-                          <div className="value mono" style={{ fontSize: 13 }}>
-                            {selectedPeer.rxBytes} / {selectedPeer.txBytes}
-                          </div>
-                        </div>
-                        {isGatewayPeer(selectedPeer.allowedIps) && (
-                          <div className="stat-tile">
-                            <div className="label">Additional networks</div>
-                            <div className="value mono" style={{ fontSize: 13, color: 'var(--accent-dim)' }}>
-                              ▲ {extraNetworks(selectedPeer.allowedIps).join(', ')}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                    <PeerStatusTable peer={selectedPeer} />
                   )}
                 </>
               ) : (
@@ -604,10 +653,27 @@ export function WireGuard() {
                   <label>Group (optional)</label>
                   <input value={peerGroup} onChange={(e) => setPeerGroup(e.target.value)} placeholder="office" title="Clusters this peer with others sharing the same group in the network views" />
                 </div>
+                <div className="field">
+                  <label>Device type (optional)</label>
+                  <select value={peerDeviceType} onChange={(e) => setPeerDeviceType(e.target.value)} title="Picks the icon this peer draws as in the isometric network view">
+                    <option value="">Unset</option>
+                    {DEVICE_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <ActionButton
                 actionId="wireguard.peerAdd"
-                params={() => ({ interfaceName: selectedInterface, peerName, allowedIps, group: peerGroup.trim() || undefined })}
+                params={() => ({
+                  interfaceName: selectedInterface,
+                  peerName,
+                  allowedIps,
+                  group: peerGroup.trim() || undefined,
+                  deviceType: peerDeviceType || undefined,
+                })}
                 label="Add peer"
                 className="primary"
                 disabled={!peerName || !allowedIps}

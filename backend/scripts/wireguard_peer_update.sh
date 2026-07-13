@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Usage: wireguard_peer_update.sh <interfaceName> <currentPeerName> <newPeerName> <allowedIpsCidr> [group]
-# Rewrites one peer's "# name:"/"# group:" markers and AllowedIPs in place —
-# PublicKey (and any PresharedKey) are left completely untouched, since
-# those are the peer's cryptographic identity, not editable metadata. This
-# is how the app edits a single peer without exposing the whole raw config
-# file; the raw editor remains available for anything this doesn't cover.
-# Validates with `wg-quick strip`, applies live via `wg syncconf` if the
-# interface is up, and rolls back on any failure.
+# Usage: wireguard_peer_update.sh <interfaceName> <currentPeerName> <newPeerName> <allowedIpsCidr> [group] [deviceType]
+# Rewrites one peer's "# name:"/"# group:"/"# deviceType:" markers and
+# AllowedIPs in place — PublicKey (and any PresharedKey) are left completely
+# untouched, since those are the peer's cryptographic identity, not editable
+# metadata. This is how the app edits a single peer without exposing the
+# whole raw config file; the raw editor remains available for anything this
+# doesn't cover. Validates with `wg-quick strip`, applies live via
+# `wg syncconf` if the interface is up, and rolls back on any failure.
 #
-# Passing a group of "" removes any existing "# group:" line for the peer
-# (clears it); a non-empty group replaces or adds it.
+# Passing a group (or deviceType) of "" removes any existing marker line
+# for the peer (clears it); a non-empty value replaces or adds it.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
 require_root
-if [[ "$#" -lt 4 || "$#" -gt 5 ]]; then
-  echo "wrong argument count: expected 4 or 5, got $#" >&2
+if [[ "$#" -lt 4 || "$#" -gt 6 ]]; then
+  echo "wrong argument count: expected 4 to 6, got $#" >&2
   exit 2
 fi
 
@@ -25,12 +25,19 @@ current_peer_name="$2"
 new_peer_name="$3"
 allowed_ips="$4"
 group="${5:-}"
+device_type="${6:-}"
 
 validate_wg_interface_name "$interface_name"
 validate_safe_token "$current_peer_name"
 validate_safe_token "$new_peer_name"
 if [[ -n "$group" ]]; then
   validate_safe_token "$group"
+fi
+if [[ -n "$device_type" ]]; then
+  case "$device_type" in
+    mobile|server|pc|laptop|router) ;;
+    *) echo "invalid deviceType: $device_type" >&2; exit 2 ;;
+  esac
 fi
 validate_allowed_ips_list "$allowed_ips"
 
@@ -52,6 +59,10 @@ have_group=0
 if [[ -n "$group" ]]; then
   have_group=1
 fi
+have_devicetype=0
+if [[ -n "$device_type" ]]; then
+  have_devicetype=1
+fi
 
 backup="$(backup_file "$CONF")"
 
@@ -59,17 +70,24 @@ awk -v marker="# name: ${current_peer_name}" \
     -v new_name_line="# name: ${new_peer_name}" \
     -v group_line="# group: ${group}" \
     -v have_group="$have_group" \
+    -v devicetype_line="# deviceType: ${device_type}" \
+    -v have_devicetype="$have_devicetype" \
     -v new_allowed="AllowedIPs = ${allowed_ips}" '
   BEGIN { in_block = 0 }
   $0 == marker {
     in_block = 1
     print new_name_line
     if (have_group == 1) { print group_line }
+    if (have_devicetype == 1) { print devicetype_line }
     next
   }
   in_block == 1 && /^# group: / {
     # Old group line — either already superseded above, or intentionally
     # dropped (group cleared). Either way, do not print the original.
+    next
+  }
+  in_block == 1 && /^# deviceType: / {
+    # Same treatment as the group line above.
     next
   }
   in_block == 1 && /^# name: / {

@@ -8,12 +8,19 @@ export const STATUS = {
   critical: { color: '#d03b3b', label: 'Offline / never' },
 };
 
+// Exported so views that draw a *continuous* position/color from age (the
+// radar) can share the exact same cutoffs peerStatus() uses for the
+// discrete good/warning/critical label, instead of duplicating magic
+// numbers that could silently drift apart.
+export const GOOD_THRESHOLD_SECONDS = 180;
+export const WARNING_THRESHOLD_SECONDS = 600;
+
 export function peerStatus(latestHandshake) {
   if (!latestHandshake) return 'critical';
   const ageSeconds = Date.now() / 1000 - Number(latestHandshake);
   if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'critical';
-  if (ageSeconds <= 180) return 'good';
-  if (ageSeconds <= 600) return 'warning';
+  if (ageSeconds <= GOOD_THRESHOLD_SECONDS) return 'good';
+  if (ageSeconds <= WARNING_THRESHOLD_SECONDS) return 'warning';
   return 'critical';
 }
 
@@ -64,3 +71,15 @@ export function extraNetworks(allowedIps) {
 export function isGatewayPeer(allowedIps) {
   return extraNetworks(allowedIps).length > 0;
 }
+
+// Fixed set a peer can be tagged with, purely to pick an icon in the
+// network views — must match the backend's deviceTypeSchema enum
+// (backend/src/catalog/actions/wireguard.js) exactly, since the value is
+// validated server-side against this same list.
+export const DEVICE_TYPES = [
+  { value: 'mobile', label: 'Mobile' },
+  { value: 'server', label: 'Server' },
+  { value: 'pc', label: 'PC' },
+  { value: 'laptop', label: 'Laptop' },
+  { value: 'router', label: 'Router' },
+];
