@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
-# Usage: wireguard_peer_add.sh <interfaceName> <peerName> <allowedIpsCidr> [group] [deviceType]
-# Generates a fresh keypair for the peer, appends it to <interfaceName>.conf
-# atomically, validates with `wg-quick strip`, applies live via `wg syncconf`
-# if the interface is up, and rolls back the config on any validation
-# failure. Prints CLIENT_PRIVATE_KEY once — it is never stored server-side.
+# Usage: wireguard_peer_add.sh <interfaceName> <peerName> <allowedIpsCidr> [group] [deviceType] [publicKey]
+# By default generates a fresh keypair for the peer, appends it to
+# <interfaceName>.conf atomically, validates with `wg-quick strip`, applies
+# live via `wg syncconf` if the interface is up, and rolls back the config
+# on any validation failure. Prints CLIENT_PRIVATE_KEY once — it is never
+# stored server-side.
 # [group] is an arbitrary user-assigned label (written as a "# group:"
 # comment, same convention as the existing "# name:" marker) used purely to
 # cluster peers in the network views — WireGuard itself never reads it.
 # [deviceType] is one of a fixed set (written as a "# deviceType:" comment)
 # used purely to pick an icon in the network views — WireGuard itself never
 # reads it either.
+# [publicKey] lets a peer that already generated its own keypair (e.g. the
+# WireGuard app on the device itself) be registered by public key alone —
+# no private key is generated or returned in this case, since the caller
+# already has one.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 
 require_root
-if [[ "$#" -lt 3 || "$#" -gt 5 ]]; then
-  echo "wrong argument count: expected 3 to 5, got $#" >&2
+if [[ "$#" -lt 3 || "$#" -gt 6 ]]; then
+  echo "wrong argument count: expected 3 to 6, got $#" >&2
   exit 2
 fi
 
@@ -25,6 +30,7 @@ peer_name="$2"
 allowed_ips="$3"
 group="${4:-}"
 device_type="${5:-}"
+public_key_override="${6:-}"
 validate_wg_interface_name "$interface_name"
 CONF="/etc/wireguard/${interface_name}.conf"
 
@@ -39,6 +45,9 @@ if [[ -n "$device_type" ]]; then
   esac
 fi
 validate_allowed_ips_list "$allowed_ips"
+if [[ -n "$public_key_override" ]]; then
+  validate_wg_public_key "$public_key_override"
+fi
 if [[ ! -f "$CONF" ]]; then
   echo "${interface_name}.conf does not exist; run wireguard.initInterface first" >&2
   exit 1
@@ -47,10 +56,19 @@ if grep -q "^# name: ${peer_name}\$" "$CONF"; then
   echo "peer already exists: $peer_name" >&2
   exit 3
 fi
+if [[ -n "$public_key_override" ]] && grep -qi "^publickey[[:space:]]*=[[:space:]]*${public_key_override}\$" "$CONF"; then
+  echo "a peer with that public key already exists on ${interface_name}" >&2
+  exit 3
+fi
 
 umask 077
-client_privkey="$(wg genkey)"
-client_pubkey="$(echo "$client_privkey" | wg pubkey)"
+if [[ -n "$public_key_override" ]]; then
+  client_privkey=""
+  client_pubkey="$public_key_override"
+else
+  client_privkey="$(wg genkey)"
+  client_pubkey="$(echo "$client_privkey" | wg pubkey)"
+fi
 # Case-insensitive: WireGuard's own parser treats key names case-
 # insensitively, and real configs on this box mix "PublicKey"/"publicKey".
 server_privkey="$(grep -i '^privatekey' "$CONF" | head -1 | sed -E 's/^[Pp]rivate[Kk]ey[[:space:]]*=[[:space:]]*//')"
@@ -94,7 +112,9 @@ if wg show "$interface_name" >/dev/null 2>&1; then
 fi
 
 echo "PEER_NAME=${peer_name}"
-echo "CLIENT_PRIVATE_KEY=${client_privkey}"
+if [[ -n "$client_privkey" ]]; then
+  echo "CLIENT_PRIVATE_KEY=${client_privkey}"
+fi
 echo "CLIENT_PUBLIC_KEY=${client_pubkey}"
 echo "SERVER_PUBLIC_KEY=${server_pubkey}"
 echo "SERVER_LISTEN_PORT=${server_listen_port}"

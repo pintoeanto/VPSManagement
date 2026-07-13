@@ -7,6 +7,40 @@ import { RouteConfiguratorPanel, dnsBadge } from '../../components/RouteConfigur
 
 const CHECK_TTL_MS = 5 * 60 * 1000;
 
+// A fuller, commented starting point than the blank "new site" default —
+// meant to be downloaded, edited offline, and uploaded back (via the
+// existing Upload button) rather than typed from scratch in the browser.
+const NGINX_TEMPLATE = `# NGINX reverse-proxy server block template.
+# Rename this file to your site's name and upload it (or paste it into a
+# new site here), then fill in server_name/proxy_pass and adjust as needed.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name your-domain.example.com;
+
+    # After issuing a TLS certificate for this hostname, NGINX/Certbot will
+    # typically add a matching "listen 443 ssl;" server block (or Certbot
+    # will extend this one) — leave this HTTP block in place either way,
+    # so unencrypted requests still resolve (e.g. for redirects or the
+    # ACME HTTP-01 challenge during future renewals).
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Uncomment for a backend that uses WebSockets (e.g. Vite/webpack
+        # dev servers, chat/live-update apps):
+        # proxy_set_header Upgrade $http_upgrade;
+        # proxy_set_header Connection "upgrade";
+    }
+}
+`;
+
 function safeNameFromFilename(filename) {
   return filename
     .replace(/\.[^.]*$/, '') // drop extension
@@ -54,7 +88,7 @@ function parseBackupTimestamp(ts) {
 }
 
 function certBadge(certificate) {
-  if (!certificate) return null;
+  if (!certificate) return { variant: 'neutral', label: 'No SSL certificate — site is HTTP-only' };
   if (certificate.status === 'valid') {
     const soon = certificate.daysRemaining != null && certificate.daysRemaining < 14;
     return { variant: soon ? 'warn' : 'ok', label: `Valid — expires ${certificate.expiry} (${certificate.daysRemaining}d)` };
@@ -380,6 +414,18 @@ export function Nginx() {
     fileInputRef.current?.click();
   }
 
+  function handleDownloadTemplate() {
+    const blob = new Blob([NGINX_TEMPLATE], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'nginx-site-template.conf';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function handleFileSelected(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -463,6 +509,9 @@ export function Nginx() {
               <div className="explorer-header">
                 <span>{sites.length} site{sites.length === 1 ? '' : 's'}</span>
                 <div className="row" style={{ gap: 4 }}>
+                  <button onClick={handleDownloadTemplate} title="Download a commented reverse-proxy config template to edit offline">
+                    Template
+                  </button>
                   <button onClick={handleUploadClick} title="Upload a config file">
                     Upload
                   </button>

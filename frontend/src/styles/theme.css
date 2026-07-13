@@ -253,6 +253,13 @@ label {
   border-radius: 0;
   overflow-y: auto;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  /* Flex column so the network view (radar/topology/isometric, whichever
+     is active) can be marked flex:1 and grow to fill exactly whatever
+     space is left below the header/tabs and above its own legend — the
+     legend then naturally rests flush at the bottom instead of trailing
+     off after a JS-guessed canvas height. */
+  display: flex;
+  flex-direction: column;
 }
 
 .grid {

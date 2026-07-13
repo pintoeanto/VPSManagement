@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { STATUS, peerStatus, formatHandshake, formatHandshakeAge, isGatewayPeer, extraNetworks, DEVICE_TYPES } from '../lib/peerStatus.js';
+import {
+  STATUS,
+  peerStatus,
+  formatHandshake,
+  formatHandshakeAge,
+  isGatewayPeer,
+  extraNetworks,
+  DEVICE_TYPES,
+  peerGroupName,
+  groupPeers,
+  groupColor,
+} from '../lib/peerStatus.js';
 
 // Grid spacing for positioning zone platforms and the peer racks within them
 // (not any icon's own pixel size — see peerR/hubR below). Generous on
@@ -42,22 +53,6 @@ const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 3;
 const CORNER_R = 5; // routing bend radius, content units
 
-// Validated categorical palette (dataviz skill reference instance) — fixed
-// hue order, never cycled/reassigned by filtering. Each zone's front
-// platform edge, heading tick, and legend swatch take the next slot in this
-// order, purely for "which platform is which zone" identity — a different
-// visual channel from peer-status color, which stays reserved for rack
-// outlines. Passes the six-check validator against this app's actual
-// surface (#f2f2f2): lightness band, chroma floor, and CVD separation all
-// PASS; the contrast WARN on 4 of the 8 slots is satisfied by the
-// always-visible zone heading + legend labels.
-const ZONE_PALETTE = ['#2a78d6', '#1baf7a', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'];
-const ZONE_FALLBACK_COLOR = '#8a8a8a';
-
-function zoneColor(index) {
-  return index < ZONE_PALETTE.length ? ZONE_PALETTE[index] : ZONE_FALLBACK_COLOR;
-}
-
 function isoPos(gx, gy) {
   return { x: LEFT_MARGIN + (gx - gy) * (TILE_W / 2), y: TOP_MARGIN + (gx + gy) * (TILE_H / 2) };
 }
@@ -66,34 +61,6 @@ function cssVar(name, fallback) {
   if (typeof document === 'undefined') return fallback;
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
-}
-
-// A peer's group is either an explicit "# group: <name>" comment in the
-// tunnel config (surfaced as peer.group) or, when unset, an automatic
-// fallback grouping by the peer's own /24 — so grouping always produces
-// something sensible even before anyone assigns explicit labels.
-function subnetKey(allowedIps) {
-  const first = (allowedIps || '').split(',')[0].trim();
-  const ip = first.split('/')[0];
-  const octets = ip.split('.');
-  return octets.length === 4 ? octets.slice(0, 3).join('.') : ip || '0.0.0';
-}
-
-function peerGroupName(peer) {
-  const explicit = (peer.group || '').trim();
-  if (explicit) return explicit;
-  return `${subnetKey(peer.allowedIps)}.0/24`;
-}
-
-function groupPeers(peers) {
-  const groups = new Map();
-  for (const p of peers) {
-    const key = peerGroupName(p);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(p);
-  }
-  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return keys.map((key) => ({ key, peers: groups.get(key) }));
 }
 
 // Default layout: hub at the origin, zone platforms flowing left-to-right in
@@ -329,7 +296,7 @@ function ZoneHeading({ x, y, label, color }) {
  * to be orbited around.
  */
 export function NetworkIsometric({ interfaceLabel, peers, fullscreen }) {
-  const containerRef = useRef(null);
+  const canvasWrapRef = useRef(null);
   const dragRef = useRef(null); // { startX, startY, startPanX, startPanY } while panning the view
   const groupDragRef = useRef(null); // { key, startClientX, startClientY, startDx, startDy } while dragging one zone
   const [hover, setHover] = useState(null); // { peer, status, x, y }
@@ -384,7 +351,7 @@ export function NetworkIsometric({ interfaceLabel, peers, fullscreen }) {
       pS: shiftPoint(corners0.pS, delta.dx, delta.dy),
       pW: shiftPoint(corners0.pW, delta.dx, delta.dy),
     };
-    return { key: g.key, root, peerNodes, corners, color: zoneColor(index) };
+    return { key: g.key, root, peerNodes, corners, color: groupColor(index) };
   });
 
   const allPoints = [hub, ...groupNodes.flatMap((g) => [g.corners.pN, g.corners.pE, g.corners.pS, g.corners.pW, ...g.peerNodes.map((n) => n.ground)])];
@@ -409,18 +376,26 @@ export function NetworkIsometric({ interfaceLabel, peers, fullscreen }) {
     return { zoom: fitZoom, panX: dims.width / 2 - contentCx * fitZoom, panY: dims.height / 2 - contentCy * fitZoom };
   }
 
-  // Container width tracks the panel; height is capped the same way the
-  // radar caps its own canvas, growing when the panel is maximized.
+  // Container width tracks the panel; height is capped at 480px normally,
+  // but in fullscreen canvasWrapRef is flex:1 in a column (toolbar + tabs +
+  // this + legend below), so its own contentRect.height IS exactly the
+  // space left over after the legend takes its share — measured from real
+  // layout, not guessed via window.innerHeight.
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    const el = canvasWrapRef.current;
+    if (!el) return;
     const observer = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect?.width;
+      const h = entries[0]?.contentRect?.height;
       if (!w) return;
-      const maxH = fullscreen ? Math.max(480, window.innerHeight - 220) : 480;
-      setDims({ width: Math.max(360, w), height: maxH });
+      if (fullscreen) {
+        if (!h) return;
+        setDims({ width: Math.max(360, w), height: Math.max(320, h) });
+      } else {
+        setDims({ width: Math.max(360, w), height: 480 });
+      }
     });
-    observer.observe(container);
+    observer.observe(el);
     return () => observer.disconnect();
   }, [fullscreen]);
 
@@ -436,7 +411,7 @@ export function NetworkIsometric({ interfaceLabel, peers, fullscreen }) {
 
   // Non-passive wheel listener so preventDefault actually stops page scroll while zooming.
   useEffect(() => {
-    const el = containerRef.current;
+    const el = canvasWrapRef.current;
     if (!el) return;
     function onWheel(e) {
       e.preventDefault();
@@ -533,10 +508,17 @@ export function NetworkIsometric({ interfaceLabel, peers, fullscreen }) {
   }
 
   return (
-    <div>
+    <div style={fullscreen ? { display: 'flex', flexDirection: 'column', height: '100%', width: '100%' } : undefined}>
       <div
-        ref={containerRef}
-        style={{ position: 'relative', width: '100%', height: dims.height, overflow: 'hidden', borderRadius: 4, border: `1px solid ${border}` }}
+        ref={canvasWrapRef}
+        style={{
+          position: 'relative',
+          width: '100%',
+          overflow: 'hidden',
+          borderRadius: 4,
+          border: `1px solid ${border}`,
+          ...(fullscreen ? { flex: '1 1 auto', minHeight: 0 } : { height: dims.height }),
+        }}
       >
         <div className="row" style={{ position: 'absolute', top: 6, right: 6, zIndex: 10, gap: 4 }}>
           <button onClick={() => zoomBy(1.25)} title="Zoom in">
@@ -676,7 +658,7 @@ export function NetworkIsometric({ interfaceLabel, peers, fullscreen }) {
         </div>
       )}
 
-      <div className="row wrap" style={{ marginTop: 6, gap: 14 }}>
+      <div className="row wrap" style={{ marginTop: 6, gap: 14, flexShrink: 0 }}>
         {Object.entries(STATUS).map(([key, s]) => (
           <span key={key} className="row" style={{ gap: 5 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, display: 'inline-block' }} />
@@ -689,7 +671,7 @@ export function NetworkIsometric({ interfaceLabel, peers, fullscreen }) {
         </span>
       </div>
       {groupNodes.length > 0 && (
-        <div className="row wrap" style={{ marginTop: 4, gap: 14 }}>
+        <div className="row wrap" style={{ marginTop: 4, gap: 14, flexShrink: 0 }}>
           {groupNodes.map((g) => (
             <span key={g.key} className="row" style={{ gap: 5 }}>
               <span style={{ width: 3, height: 11, background: g.color, display: 'inline-block' }} />
@@ -698,7 +680,7 @@ export function NetworkIsometric({ interfaceLabel, peers, fullscreen }) {
           ))}
         </div>
       )}
-      <div className="row wrap" style={{ marginTop: 4, gap: 14 }}>
+      <div className="row wrap" style={{ marginTop: 4, gap: 14, flexShrink: 0 }}>
         <span className="hint-text">
           Grouped by <code>#&nbsp;group:</code> label, or by /24 when unset
         </span>

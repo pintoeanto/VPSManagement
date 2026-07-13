@@ -108,6 +108,25 @@ function cssVar(name, fallback) {
   return v || fallback;
 }
 
+// Recompute the canvas's DPI-correct buffer size from its current CSS
+// (logical) size and push it to the element — but only actually touch
+// canvas.width/height when they've changed, since reassigning either
+// property clears the canvas immediately regardless of value, which would
+// otherwise flash the canvas blank on every call even when nothing moved.
+// Called fresh every frame (not just on a resize event) so a live-dragged
+// resize is picked up on the very next paint without needing to tear down
+// and restart the whole draw loop.
+function syncCanvasSize(canvas, width, height) {
+  const dpr = window.devicePixelRatio || 1;
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+  return dpr;
+}
+
 // Where a ray from (cx,cy) in `angle` direction exits the visible world
 // rect — used to place an off-screen indicator right at the edge of what's
 // currently in view. Assumes the origin is inside the rect (true for the
@@ -211,7 +230,7 @@ function drawElasticBeam(ctx, x1, y1, x2, y2, baseHalfWidth, stretch, fillStyle)
  */
 export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
   const canvasRef = useRef(null);
-  const containerRef = useRef(null);
+  const canvasWrapRef = useRef(null); // the flex-grown wrapper around the canvas — measured directly for sizing, so fullscreen height comes from real layout, not a guess
   const nodeStateRef = useRef(new Map()); // key -> { x, y, vx, vy } — world-space physics state
   const hitboxesRef = useRef([]); // world-space: [{x,y,r,peer,status}]
   const viewRef = useRef({ ...DEFAULT_VIEW });
@@ -219,8 +238,10 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
   const draggedKeyRef = useRef(null); // publicKey of the peer currently being hand-dragged, if any
   const [hover, setHover] = useState(null); // { peer, status, screenX, screenY }
   const [dims, setDims] = useState({ width: 640, height: 380 });
+  const dimsRef = useRef(dims); // mirrors `dims` for the draw loop to read fresh each frame without needing dims in its own effect deps
   const [, setViewTick] = useState(0); // bump to re-render after button-driven view changes
   const prevDimsRef = useRef(null); // last dims this effect actually ran with, for the resize rescale below
+  dimsRef.current = dims; // kept live every render — safe, since it's only ever read from the async rAF loop, never during render
 
   // Seed new peers with a starting position/velocity; existing peers keep
   // their live physics state untouched here — the collision loop in the
@@ -294,18 +315,25 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
   }, [peers, dims.width, dims.height]);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    const el = canvasWrapRef.current;
+    if (!el) return;
     const observer = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect?.width;
+      const h = entries[0]?.contentRect?.height;
       if (!w) return;
-      // Capped at 480px normally so the radar doesn't dominate the page
-      // inline — but when maximized, there's a whole viewport to use, so
-      // let it grow to fill most of it instead of staying pinned short.
-      const maxH = fullscreen ? Math.max(480, window.innerHeight - 220) : Math.min(w * 0.6, 480);
-      setDims({ width: Math.max(360, w), height: Math.max(320, maxH) });
+      if (fullscreen) {
+        // canvasWrapRef is flex:1 inside the fullscreen column (toolbar +
+        // tabs + this + legend), so its own contentRect.height IS exactly
+        // the space left over after the legend below it takes its share —
+        // measured from real layout, not guessed via window.innerHeight.
+        if (!h) return;
+        setDims({ width: Math.max(360, w), height: Math.max(320, h) });
+      } else {
+        // Capped at 480px normally so the radar doesn't dominate the page inline.
+        setDims({ width: Math.max(360, w), height: Math.max(320, Math.min(w * 0.6, 480)) });
+      }
     });
-    observer.observe(container);
+    observer.observe(el);
     return () => observer.disconnect();
   }, [fullscreen]);
 
@@ -335,10 +363,6 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const { width, height } = dims;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
     const ctx = canvas.getContext('2d');
 
     let raf;
@@ -349,18 +373,30 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
     const accent = cssVar('--accent-dim', '#0068c7');
     const codeBg = cssVar('--bg-code', '#fafafa');
 
-    // Centered, not pinned to the left edge — peers now wander the full
-    // ring (both sides), so the hub needs equal room in every direction for
-    // the default framing to show the whole ring without any edge-hugging.
-    const cx = width / 2;
-    const cy = height / 2;
-    const maxRx = Math.min(width, height) / 2 - 20;
-    const maxRy = maxRx;
-
     function draw(now) {
       const dt = Math.min(0.1, (now - lastTime) / 1000);
       lastTime = now;
       const view = viewRef.current;
+
+      // Canvas size is recalculated fresh every frame from the live
+      // container dims (a ref, not a value captured once when this effect
+      // last ran) and pushed to the canvas element's own buffer — so a
+      // resize (dragging the fullscreen window, the ResizeObserver firing
+      // mid-drag, a sidebar collapse...) is picked up smoothly on the very
+      // next frame, without tearing down and restarting this whole rAF
+      // loop the way depending on `dims` here would (which previously
+      // reset lastTime and re-fetched CSS vars on every resize tick,
+      // flashing the canvas blank each time).
+      const { width, height } = dimsRef.current;
+      const dpr = syncCanvasSize(canvas, width, height);
+
+      // Centered, not pinned to the left edge — peers now wander the full
+      // ring (both sides), so the hub needs equal room in every direction for
+      // the default framing to show the whole ring without any edge-hugging.
+      const cx = width / 2;
+      const cy = height / 2;
+      const maxRx = Math.min(width, height) / 2 - 20;
+      const maxRy = maxRx;
 
       // Bounded panning: clamp so the hub itself can never be dragged fully
       // off-canvas — everything else (peers, rings) is positioned relative
@@ -860,7 +896,10 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
     }
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [dims, peers, interfaceLabel]);
+    // dims is deliberately excluded — draw() reads dimsRef.current fresh
+    // every frame instead, so a resize doesn't restart this whole effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peers, interfaceLabel]);
 
   function screenToWorld(clientX, clientY) {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -977,32 +1016,37 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
   }
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
-      <div className="row" style={{ position: 'absolute', top: 0, right: 0, zIndex: 10, gap: 4 }}>
-        <button onClick={() => zoomBy(1.25)} title="Zoom in">
-          +
-        </button>
-        <button onClick={() => zoomBy(0.8)} title="Zoom out">
-          −
-        </button>
-        <button onClick={resetView} title="Reset view">
-          Reset view
-        </button>
+    <div style={fullscreen ? { display: 'flex', flexDirection: 'column', height: '100%', width: '100%' } : { width: '100%' }}>
+      <div
+        ref={canvasWrapRef}
+        style={{ position: 'relative', width: '100%', ...(fullscreen ? { flex: '1 1 auto', minHeight: 0 } : {}) }}
+      >
+        <div className="row" style={{ position: 'absolute', top: 0, right: 0, zIndex: 10, gap: 4 }}>
+          <button onClick={() => zoomBy(1.25)} title="Zoom in">
+            +
+          </button>
+          <button onClick={() => zoomBy(0.8)} title="Zoom out">
+            −
+          </button>
+          <button onClick={resetView} title="Reset view">
+            Reset view
+          </button>
+        </div>
+        <canvas
+          ref={canvasRef}
+          style={{
+            width: dims.width,
+            height: dims.height,
+            display: 'block',
+            cursor: dragRef.current || draggedKeyRef.current ? 'grabbing' : 'grab',
+            touchAction: 'none',
+          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={() => setHover(null)}
+        />
       </div>
-      <canvas
-        ref={canvasRef}
-        style={{
-          width: dims.width,
-          height: dims.height,
-          display: 'block',
-          cursor: dragRef.current || draggedKeyRef.current ? 'grabbing' : 'grab',
-          touchAction: 'none',
-        }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={() => setHover(null)}
-      />
       {hover && (
         <div
           style={{
@@ -1034,7 +1078,7 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
           <div className="hint-text">Last handshake: {formatHandshake(hover.peer.latestHandshake)}</div>
         </div>
       )}
-      <div className="row wrap" style={{ marginTop: 6, gap: 14 }}>
+      <div className="row wrap" style={{ marginTop: 6, gap: 14, flexShrink: 0 }}>
         {Object.entries(STATUS).map(([key, s]) => (
           <span key={key} className="row" style={{ gap: 5 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, display: 'inline-block' }} />

@@ -72,6 +72,53 @@ export function isGatewayPeer(allowedIps) {
   return extraNetworks(allowedIps).length > 0;
 }
 
+// A peer's group is either an explicit "# group: <name>" comment in the
+// tunnel config (surfaced as peer.group) or, when unset, an automatic
+// fallback grouping by the peer's own /24 — so grouping always produces
+// something sensible even before anyone assigns explicit labels. Shared by
+// every view that clusters peers (isometric, topology) so they always
+// agree on which peers belong together.
+export function subnetKey(allowedIps) {
+  const first = (allowedIps || '').split(',')[0].trim();
+  const ip = first.split('/')[0];
+  const octets = ip.split('.');
+  return octets.length === 4 ? octets.slice(0, 3).join('.') : ip || '0.0.0';
+}
+
+export function peerGroupName(peer) {
+  const explicit = (peer.group || '').trim();
+  if (explicit) return explicit;
+  return `${subnetKey(peer.allowedIps)}.0/24`;
+}
+
+export function groupPeers(peers) {
+  const groups = new Map();
+  for (const p of peers) {
+    const key = peerGroupName(p);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return keys.map((key) => ({ key, peers: groups.get(key) }));
+}
+
+// Validated categorical palette (dataviz skill reference instance) — fixed
+// hue order, never cycled/reassigned by filtering. Every view that colors
+// something by *group identity* (a zone platform's edge, a topology
+// swimlane, a legend swatch) takes the next slot in this same order, so a
+// given group reads as the same color everywhere in the app — a different
+// visual channel from peer-status color, which stays reserved for
+// connection health. Passes the six-check validator against this app's
+// actual surface (#f2f2f2): lightness band, chroma floor, and CVD
+// separation all PASS; the contrast WARN on 4 of the 8 slots is satisfied
+// by the always-visible group label + legend text.
+export const GROUP_PALETTE = ['#2a78d6', '#1baf7a', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'];
+export const GROUP_FALLBACK_COLOR = '#8a8a8a';
+
+export function groupColor(index) {
+  return index < GROUP_PALETTE.length ? GROUP_PALETTE[index] : GROUP_FALLBACK_COLOR;
+}
+
 // Fixed set a peer can be tagged with, purely to pick an icon in the
 // network views — must match the backend's deviceTypeSchema enum
 // (backend/src/catalog/actions/wireguard.js) exactly, since the value is

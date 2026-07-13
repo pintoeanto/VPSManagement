@@ -93,6 +93,19 @@ validate_wg_interface_name() {
   fi
 }
 
+# validate_wg_public_key <value>
+# WireGuard public (and private) keys are 32 raw bytes, standard-base64
+# encoded to exactly 44 characters with '=' padding — used when a peer
+# supplies its own already-generated public key instead of having one
+# generated server-side.
+validate_wg_public_key() {
+  local value="$1"
+  if [[ ! "$value" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+    echo "invalid WireGuard public key: $value" >&2
+    exit 2
+  fi
+}
+
 # validate_allowed_ips_list <value>
 # A peer's AllowedIPs is a comma-separated list in real WireGuard configs —
 # gateway peers route more than just their own /32. Validates every entry

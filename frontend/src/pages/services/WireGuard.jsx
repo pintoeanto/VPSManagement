@@ -197,6 +197,7 @@ export function WireGuard() {
   const [allowedIps, setAllowedIps] = useState('10.8.0.2/32');
   const [peerGroup, setPeerGroup] = useState('');
   const [peerDeviceType, setPeerDeviceType] = useState('');
+  const [peerPublicKey, setPeerPublicKey] = useState('');
   const [newPeer, setNewPeer] = useState(null);
 
   const [editingPeer, setEditingPeer] = useState(false);
@@ -416,7 +417,7 @@ export function WireGuard() {
                 </button>
               </div>
               {networkView === 'radar' && <NetworkRadar interfaceLabel={selectedInterface} peers={status.peers} fullscreen={networkFullscreen} />}
-              {networkView === 'topology' && <NetworkTopology interfaceLabel={selectedInterface} peers={status.peers} />}
+              {networkView === 'topology' && <NetworkTopology interfaceLabel={selectedInterface} peers={status.peers} fullscreen={networkFullscreen} />}
               {networkView === 'isometric' && <NetworkIsometric interfaceLabel={selectedInterface} peers={status.peers} fullscreen={networkFullscreen} />}
               {networkView === 'list' && <NetworkList peers={status.peers} />}
             </div>
@@ -621,10 +622,6 @@ export function WireGuard() {
                           <input value={editPeerName} onChange={(e) => setEditPeerName(e.target.value)} />
                         </div>
                         <div className="field">
-                          <label>Allowed IPs (CIDR, comma-separated)</label>
-                          <input value={editAllowedIps} onChange={(e) => setEditAllowedIps(e.target.value)} />
-                        </div>
-                        <div className="field">
                           <label>Group (optional)</label>
                           <input value={editGroup} onChange={(e) => setEditGroup(e.target.value)} placeholder="office" />
                         </div>
@@ -638,6 +635,10 @@ export function WireGuard() {
                               </option>
                             ))}
                           </select>
+                        </div>
+                        <div className="field" style={{ gridColumn: '1 / -1' }}>
+                          <label>Allowed IPs (CIDR, comma-separated)</label>
+                          <input value={editAllowedIps} onChange={(e) => setEditAllowedIps(e.target.value)} />
                         </div>
                       </div>
                     </div>
@@ -660,10 +661,6 @@ export function WireGuard() {
                   <input value={peerName} onChange={(e) => setPeerName(e.target.value)} placeholder="laptop" />
                 </div>
                 <div className="field">
-                  <label>Allowed IPs (CIDR)</label>
-                  <input value={allowedIps} onChange={(e) => setAllowedIps(e.target.value)} placeholder="10.8.0.2/32" />
-                </div>
-                <div className="field">
                   <label>Group (optional)</label>
                   <input value={peerGroup} onChange={(e) => setPeerGroup(e.target.value)} placeholder="office" title="Clusters this peer with others sharing the same group in the network views" />
                 </div>
@@ -678,6 +675,20 @@ export function WireGuard() {
                     ))}
                   </select>
                 </div>
+                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                  <label>Allowed IPs (CIDR, comma-separated)</label>
+                  <input value={allowedIps} onChange={(e) => setAllowedIps(e.target.value)} placeholder="10.8.0.2/32" />
+                </div>
+                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                  <label>Public key (optional)</label>
+                  <input
+                    className="mono"
+                    value={peerPublicKey}
+                    onChange={(e) => setPeerPublicKey(e.target.value)}
+                    placeholder="Leave blank to generate a new keypair — or paste a key the peer already generated itself"
+                    title="If this peer already generated its own keypair (e.g. its own WireGuard app), paste its public key here so the private key never touches this server. Leave blank to have the server generate one for you."
+                  />
+                </div>
               </div>
               <ActionButton
                 actionId="wireguard.peerAdd"
@@ -687,6 +698,7 @@ export function WireGuard() {
                   allowedIps,
                   group: peerGroup.trim() || undefined,
                   deviceType: peerDeviceType || undefined,
+                  publicKey: peerPublicKey.trim() || undefined,
                 })}
                 label="Add peer"
                 className="primary"
@@ -698,11 +710,13 @@ export function WireGuard() {
 
           {newPeer && (
             <div className="panel">
-              <h2>New peer credentials — shown once</h2>
-              <p className="hint-text">
-                The private key below is never stored server-side. Copy it into the peer's WireGuard client config now.
-              </p>
-              <pre className="code-block">
+              {newPeer.CLIENT_PRIVATE_KEY ? (
+                <>
+                  <h2>New peer credentials — shown once</h2>
+                  <p className="hint-text">
+                    The private key below is never stored server-side. Copy it into the peer's WireGuard client config now.
+                  </p>
+                  <pre className="code-block">
 {`[Interface]
 PrivateKey = ${newPeer.CLIENT_PRIVATE_KEY}
 Address = ${newPeer.ALLOWED_IPS}
@@ -712,7 +726,23 @@ PublicKey = ${newPeer.SERVER_PUBLIC_KEY}
 Endpoint = <your-server-ip-or-hostname>:${newPeer.SERVER_LISTEN_PORT}
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25`}
-              </pre>
+                  </pre>
+                </>
+              ) : (
+                <>
+                  <h2>Peer registered</h2>
+                  <p className="hint-text">
+                    Added using the public key you supplied — no private key was generated (the peer already has its own). Add this to the peer's WireGuard config:
+                  </p>
+                  <pre className="code-block">
+{`[Peer]
+PublicKey = ${newPeer.SERVER_PUBLIC_KEY}
+Endpoint = <your-server-ip-or-hostname>:${newPeer.SERVER_LISTEN_PORT}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25`}
+                  </pre>
+                </>
+              )}
               <button onClick={() => setNewPeer(null)}>Dismiss</button>
             </div>
           )}

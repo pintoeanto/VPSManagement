@@ -194,6 +194,11 @@ const peerList = defineAction({
   },
 });
 
+// WireGuard public keys are 32 raw bytes, standard-base64 encoded to
+// exactly 44 characters with '=' padding — must match validate_wg_public_key
+// in scripts/lib/common.sh exactly.
+const wgPublicKeySchema = z.string().regex(/^[A-Za-z0-9+/]{43}=$/, 'Must be a base64-encoded WireGuard public key');
+
 const peerAddSchema = z.object({
   interfaceName: interfaceNameSchema,
   peerName: z.string().min(1).max(64).regex(peerNameToken),
@@ -203,6 +208,11 @@ const peerAddSchema = z.object({
   // reads it.
   group: z.string().max(64).regex(peerNameToken).optional(),
   deviceType: deviceTypeSchema,
+  // When supplied, the peer already generated its own keypair (e.g. a
+  // mobile client) and only the public key is registered server-side — no
+  // private key is generated or returned. Omit to have the server generate
+  // a full keypair and return the private key once, as before.
+  publicKey: wgPublicKeySchema.optional(),
 });
 
 function parsePeerAddOutput(stdout) {
@@ -223,18 +233,23 @@ const peerAdd = defineAction({
   async detect(params) {
     const result = await runHelperScript('WIREGUARD_STATUS', ['show', params.interfaceName]);
     const existing = result.success ? parseStatus(result.stdout).peers : [];
-    return { exists: existing.some((p) => p.name === params.peerName) };
+    return {
+      exists: existing.some((p) => p.name === params.peerName),
+      publicKeyInUse: params.publicKey ? existing.some((p) => p.publicKey === params.publicKey) : false,
+    };
   },
   async plan(params, detectResult) {
     if (detectResult.exists) return { description: 'Already satisfied (peer exists)', changes: [] };
+    if (detectResult.publicKeyInUse) throw new Error(`A peer with that public key already exists on ${params.interfaceName}`);
     return { description: `Add peer ${params.peerName} to ${params.interfaceName} with allowedIps ${params.allowedIps}` };
   },
   async apply(params, detectResult) {
     if (detectResult.exists) return { alreadySatisfied: true };
-    // Positional args from here on — group/deviceType are always passed
-    // (empty string when unset) so a deviceType can be supplied without a
-    // group, since bash can't skip a positional slot.
-    const args = [params.interfaceName, params.peerName, params.allowedIps, params.group || '', params.deviceType || ''];
+    if (detectResult.publicKeyInUse) throw new Error(`A peer with that public key already exists on ${params.interfaceName}`);
+    // Positional args from here on — group/deviceType/publicKey are always
+    // passed (empty string when unset) so a later slot can be supplied
+    // without an earlier one, since bash can't skip a positional arg.
+    const args = [params.interfaceName, params.peerName, params.allowedIps, params.group || '', params.deviceType || '', params.publicKey || ''];
     const result = await runHelperScript('WIREGUARD_PEER_ADD', args);
     if (!result.success) {
       throw new Error(`wireguard_peer_add failed (exit ${result.exitCode}): ${result.stderr.trim()}`);

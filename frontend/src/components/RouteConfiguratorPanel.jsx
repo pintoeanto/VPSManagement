@@ -161,7 +161,7 @@ export function RouteConfiguratorPanel({ onDeployed, prefill, prefillNonce }) {
             <option value="1">Enabled</option>
           </select>
         </div>
-        <div className="field">
+        <div className="field" style={{ gridColumn: 'span 2' }}>
           <label>Ignore backend TLS errors</label>
           <select value={ignoreBackendTlsErrors ? '1' : '0'} onChange={(e) => setIgnoreBackendTlsErrors(e.target.value === '1')}>
             <option value="0">No — verify backend certificate</option>
