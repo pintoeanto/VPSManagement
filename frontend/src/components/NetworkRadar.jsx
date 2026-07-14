@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { STATUS, peerStatus, formatHandshake, isGatewayPeer, extraNetworks, GOOD_THRESHOLD_SECONDS, WARNING_THRESHOLD_SECONDS } from '../lib/peerStatus.js';
+import {
+  STATUS,
+  peerStatus,
+  formatHandshake,
+  isGatewayPeer,
+  extraNetworks,
+  GOOD_THRESHOLD_SECONDS,
+  WARNING_THRESHOLD_SECONDS,
+  consumptionFractions,
+  peerTransferBytes,
+  formatBytes,
+} from '../lib/peerStatus.js';
 
 const RING_FRACS = [0.34, 0.67, 1.0];
 const FULL_CIRCLE = Math.PI * 2;
@@ -51,6 +62,13 @@ const CRITICAL_SATURATE_SECONDS = 900;
 // critical damping for this stiffness, 2*sqrt(12)≈6.9).
 const RADIAL_STIFFNESS = 12;
 const RADIAL_DAMPING = 4.5;
+
+// Data-consumption ring: a small halo drawn around each peer's dot, gray
+// track + green arc proportional to that peer's share of the tunnel's total
+// rx+tx bytes — a separate visual channel from the dot's own status color,
+// so "how much data" and "how healthy is the connection" never compete for
+// the same color.
+const CONSUMPTION_RING_COLOR = '#1fa855';
 
 // The warning band's color itself creeps from yellow toward orange as a
 // peer nears the critical threshold — an early, gradual warning instead of
@@ -473,6 +491,7 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
       const visBottom = (height - view.panY) / view.zoom - viewportMarginWorld;
 
       // Peers
+      const fractions = consumptionFractions(peers);
       const hitboxes = [];
       // Off-screen edge pointers — populated below for any peer whose ring
       // never crosses the visible rect at all (the documented edge case in
@@ -814,6 +833,39 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
         ctx.fillStyle = glow;
         ctx.fill();
 
+        // Data-consumption ring: a small halo just outside the glow — a gray
+        // track showing the full circle, with a green arc proportional to
+        // this peer's share of total rx+tx bytes across every peer on the
+        // tunnel. The arc is centered on the point where the hub-connector
+        // beam meets the ring (drawAngle points hub->peer, so the beam
+        // touches the ring on the near-hub side at drawAngle + PI) and
+        // grows outward equally in both directions from there as the
+        // percentage rises, rather than starting from an arbitrary fixed
+        // clock position unrelated to the beam. Purely additive to the
+        // status dot/glow above — never changes the dot's own color or the
+        // peer's radial position (see the radar-ring-confinement constraint
+        // on this file: only the existing status-band radius logic governs
+        // distance-from-hub).
+        const consumeRingR = glowR + 1 / view.zoom;
+        const consumeRingWidth = 1.5 / view.zoom;
+        ctx.beginPath();
+        ctx.arc(x, y, consumeRingR, 0, Math.PI * 2);
+        ctx.strokeStyle = textDim + '10';
+        ctx.lineWidth = consumeRingWidth;
+        ctx.stroke();
+        const consumeFrac = fractions.get(p.publicKey) || 0;
+        if (consumeFrac > 0.003) {
+          const ringCenterAngle = drawAngle + Math.PI;
+          const halfSweep = Math.min(1, consumeFrac) * Math.PI;
+          ctx.beginPath();
+          ctx.arc(x, y, consumeRingR, ringCenterAngle - halfSweep, ringCenterAngle + halfSweep);
+          ctx.strokeStyle = CONSUMPTION_RING_COLOR;
+          ctx.lineWidth = consumeRingWidth;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+          ctx.lineCap = 'butt';
+        }
+
         ctx.beginPath();
         ctx.arc(x, y, dotR, 0, Math.PI * 2);
         ctx.fillStyle = color;
@@ -1076,6 +1128,9 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
           )}
           <div className="hint-text mono">Endpoint: {hover.peer.endpoint || 'none'}</div>
           <div className="hint-text">Last handshake: {formatHandshake(hover.peer.latestHandshake)}</div>
+          <div className="hint-text">
+            Data usage: {formatBytes(peerTransferBytes(hover.peer))} ({Math.round((consumptionFractions(peers).get(hover.peer.publicKey) || 0) * 100)}% of total)
+          </div>
         </div>
       )}
       <div className="row wrap" style={{ marginTop: 6, gap: 14, flexShrink: 0 }}>
@@ -1088,6 +1143,20 @@ export function NetworkRadar({ interfaceLabel, peers, fullscreen }) {
         <span className="row" style={{ gap: 5 }}>
           <span style={{ color: 'var(--accent-dim)', fontSize: 11 }}>▲</span>
           <span className="hint-text">Routes an additional subnet</span>
+        </span>
+        <span className="row" style={{ gap: 5 }}>
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: '50%',
+              display: 'inline-block',
+              border: `2px solid ${CONSUMPTION_RING_COLOR}`,
+              borderRightColor: 'var(--text-dim)',
+              borderBottomColor: 'var(--text-dim)',
+            }}
+          />
+          <span className="hint-text">Ring = share of total data transferred</span>
         </span>
         <span className="hint-text">Scroll to zoom, drag empty space to pan, drag a dot to move it</span>
       </div>

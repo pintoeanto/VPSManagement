@@ -10,6 +10,9 @@ import {
   groupPeers,
   groupColor,
   STATUS_SEVERITY,
+  consumptionFractions,
+  peerTransferBytes,
+  formatBytes,
 } from '../lib/peerStatus.js';
 
 const MIN_ZOOM = 0.3;
@@ -18,7 +21,7 @@ const DEFAULT_VIEW = { zoom: 1, panX: 0, panY: 0 };
 const FULL_CIRCLE = Math.PI * 2;
 
 // ---------------- Hierarchical (grouped bus/tree) layout ----------------
-const H_ROW = 40;
+const H_ROW = 46;
 const H_GROUP_GAP = 16;
 const H_HUB_X = 60;
 const H_HUB_R = 20;
@@ -27,6 +30,7 @@ const H_GROUP_X = H_TRUNK_X + 20;
 const H_GROUP_PILL_W = 150;
 const H_PEER_X = H_GROUP_X + 190;
 const H_PILL_W = 170;
+const H_PILL_H = 34;
 const H_TOP_MARGIN = 26;
 
 // ---------------- Radial (sunburst) layout ----------------
@@ -117,7 +121,7 @@ function computeRadialLayout(groups) {
   return { peerNodes, groupArcs, maxExtent };
 }
 
-function HierarchicalDiagram({ interfaceLabel, layout, onToggleGroup, onHover, colors }) {
+function HierarchicalDiagram({ interfaceLabel, layout, onToggleGroup, onHover, colors, fractions }) {
   const { border, text, textDim, accent, surface } = colors;
   const { groupNodes, peerNodes, hubY } = layout;
   const firstY = groupNodes[0]?.y ?? hubY;
@@ -177,6 +181,12 @@ function HierarchicalDiagram({ interfaceLabel, layout, onToggleGroup, onHover, c
         const status = peerStatus(p.latestHandshake);
         const dotColor = STATUS[status].color;
         const gateway = isGatewayPeer(p.allowedIps);
+        const frac = fractions.get(p.publicKey) || 0;
+        const pct = Math.round(frac * 100);
+        const barX = H_PEER_X + 14;
+        const barW = H_PILL_W - 28;
+        const barY = y - 2;
+        const barH = 5;
         return (
           <g
             key={p.publicKey}
@@ -186,13 +196,19 @@ function HierarchicalDiagram({ interfaceLabel, layout, onToggleGroup, onHover, c
             style={{ cursor: 'pointer' }}
           >
             <line x1={H_GROUP_X + H_GROUP_PILL_W} y1={y} x2={H_PEER_X - 8} y2={y} stroke={color} strokeWidth={1.4} opacity={0.6} />
-            <rect x={H_PEER_X} y={y - 14} width={H_PILL_W} height={28} rx={5} fill="var(--bg-panel-raised)" stroke={border} strokeWidth={1} />
-            <circle cx={H_PEER_X + 14} cy={y} r={4} fill={dotColor} style={status === 'good' ? { animation: 'status-pulse 1.6s ease-in-out infinite' } : undefined} />
-            <text x={H_PEER_X + 24} y={y - 1} fontSize={11} fill={text}>
+            <rect x={H_PEER_X} y={y - H_PILL_H / 2} width={H_PILL_W} height={H_PILL_H} rx={5} fill="var(--bg-panel-raised)" stroke={border} strokeWidth={1} />
+            <circle cx={H_PEER_X + 14} cy={y - 9} r={4} fill={dotColor} style={status === 'good' ? { animation: 'status-pulse 1.6s ease-in-out infinite' } : undefined} />
+            <text x={H_PEER_X + 24} y={y - 6} fontSize={11} fill={text}>
               {p.name.length > 16 ? p.name.slice(0, 15) + '…' : p.name}
             </text>
-            <text x={H_PEER_X + 24} y={y + 11} fontSize={9} fill={textDim}>
-              {formatHandshakeAge(p.latestHandshake)}
+            {/* Data-consumption bar: gray track, green fill proportional to
+                this peer's share of the tunnel's total rx+tx bytes — the
+                same fractions the radar's ring draws from, so both views
+                always agree on the percentage. */}
+            <rect x={barX} y={barY} width={barW} height={barH} rx={2.5} fill={textDim} opacity={0.25} />
+            {frac > 0 && <rect x={barX} y={barY} width={Math.max(2, barW * frac)} height={barH} rx={2.5} fill="#1fa855" />}
+            <text x={H_PEER_X + 24} y={y + 14} fontSize={9} fill={textDim}>
+              {formatHandshakeAge(p.latestHandshake)} · {pct}%
             </text>
             {gateway && (
               <>
@@ -378,6 +394,7 @@ export function NetworkTopology({ interfaceLabel, peers, fullscreen }) {
   const surface = cssVar('--bg-surface', '#ffffff');
 
   const groups = groupPeers(peers);
+  const fractions = consumptionFractions(peers);
 
   function toggleCollapsed(key) {
     setCollapsed((prev) => {
@@ -552,6 +569,7 @@ export function NetworkTopology({ interfaceLabel, peers, fullscreen }) {
                   onToggleGroup={toggleCollapsed}
                   onHover={setHover}
                   colors={{ border, text, textDim, accent, surface }}
+                  fractions={fractions}
                 />
               )}
               {layoutMode === 'radial' && (
@@ -603,6 +621,9 @@ export function NetworkTopology({ interfaceLabel, peers, fullscreen }) {
           <div className="hint-text mono">Allowed IPs: {hover.peer.allowedIps}</div>
           <div className="hint-text mono">Endpoint: {hover.peer.endpoint || 'none'}</div>
           <div className="hint-text">Last handshake: {formatHandshake(hover.peer.latestHandshake)}</div>
+          <div className="hint-text">
+            Data usage: {formatBytes(peerTransferBytes(hover.peer))} ({Math.round((fractions.get(hover.peer.publicKey) || 0) * 100)}% of total)
+          </div>
         </div>
       )}
 
@@ -617,6 +638,12 @@ export function NetworkTopology({ interfaceLabel, peers, fullscreen }) {
           <span style={{ color: 'var(--accent-dim)', fontSize: 11 }}>▸</span>
           <span className="hint-text">Routes an additional subnet</span>
         </span>
+        {layoutMode === 'hierarchical' && (
+          <span className="row" style={{ gap: 5 }}>
+            <span style={{ width: 12, height: 5, borderRadius: 2.5, background: '#1fa855', display: 'inline-block' }} />
+            <span className="hint-text">Bar = share of total data transferred</span>
+          </span>
+        )}
       </div>
       {groups.length > 0 && (
         <div className="row wrap" style={{ marginTop: 4, gap: 14, flexShrink: 0 }}>

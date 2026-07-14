@@ -198,6 +198,7 @@ export function WireGuard() {
   const [peerGroup, setPeerGroup] = useState('');
   const [peerDeviceType, setPeerDeviceType] = useState('');
   const [peerPublicKey, setPeerPublicKey] = useState('');
+  const [useServerGeneratedKey, setUseServerGeneratedKey] = useState(false);
   const [newPeer, setNewPeer] = useState(null);
 
   const [editingPeer, setEditingPeer] = useState(false);
@@ -680,14 +681,27 @@ export function WireGuard() {
                   <input value={allowedIps} onChange={(e) => setAllowedIps(e.target.value)} placeholder="10.8.0.2/32" />
                 </div>
                 <div className="field" style={{ gridColumn: '1 / -1' }}>
-                  <label>Public key (optional)</label>
+                  <label>Public key (from the peer device)</label>
                   <input
                     className="mono"
                     value={peerPublicKey}
                     onChange={(e) => setPeerPublicKey(e.target.value)}
-                    placeholder="Leave blank to generate a new keypair — or paste a key the peer already generated itself"
-                    title="If this peer already generated its own keypair (e.g. its own WireGuard app), paste its public key here so the private key never touches this server. Leave blank to have the server generate one for you."
+                    placeholder="Paste the public key generated on the peer (wg genkey | wg pubkey)"
+                    title="Generate a keypair on the peer device itself (wg genkey | wg pubkey) and paste only the public key here — its private key never has to touch this server."
+                    disabled={useServerGeneratedKey}
                   />
+                  <label className="hint-text" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, textTransform: 'none' }}>
+                    <input
+                      type="checkbox"
+                      checked={useServerGeneratedKey}
+                      onChange={(e) => {
+                        setUseServerGeneratedKey(e.target.checked);
+                        if (e.target.checked) setPeerPublicKey('');
+                      }}
+                      style={{ width: 'auto', flex: '0 0 auto', padding: 0, background: 'transparent', border: 'none' }}
+                    />
+                    Generate on the server instead (legacy, less secure)
+                  </label>
                 </div>
               </div>
               <ActionButton
@@ -698,11 +712,11 @@ export function WireGuard() {
                   allowedIps,
                   group: peerGroup.trim() || undefined,
                   deviceType: peerDeviceType || undefined,
-                  publicKey: peerPublicKey.trim() || undefined,
+                  publicKey: useServerGeneratedKey ? undefined : peerPublicKey.trim(),
                 })}
                 label="Add peer"
                 className="primary"
-                disabled={!peerName || !allowedIps}
+                disabled={!peerName || !allowedIps || (!useServerGeneratedKey && !peerPublicKey.trim())}
                 onApplied={handlePeerAdded}
               />
             </div>

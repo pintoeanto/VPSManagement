@@ -52,6 +52,25 @@ export function formatBytes(n) {
   return `${(value / 1024 ** exp).toFixed(exp === 0 ? 0 : 1)} ${BYTE_UNITS[exp]}`;
 }
 
+// A peer's total data transfer (both directions) — the raw quantity every
+// "data consumption" indicator (radar ring, topology bar) is a share of.
+export function peerTransferBytes(peer) {
+  return (Number(peer.rxBytes) || 0) + (Number(peer.txBytes) || 0);
+}
+
+// Each peer's share of the tunnel's total rx+tx bytes, as a 0..1 fraction —
+// computed once for the whole peer set so every view that draws a
+// consumption indicator (the radar's ring, the topology's bar) agrees on
+// the same percentage instead of each computing its own total.
+export function consumptionFractions(peers) {
+  const total = peers.reduce((sum, p) => sum + peerTransferBytes(p), 0);
+  const map = new Map();
+  for (const p of peers) {
+    map.set(p.publicKey, total > 0 ? peerTransferBytes(p) / total : 0);
+  }
+  return map;
+}
+
 // Severity order for "worst first" sorting — the ops-triage convention: the
 // thing most likely to need attention should sort to the top.
 export const STATUS_SEVERITY = { critical: 0, warning: 1, good: 2 };
